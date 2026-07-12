@@ -495,6 +495,7 @@ document.addEventListener("drop", async (event) => {
 
 api.onCommand(handleCommand);
 api.onSaveBeforeClose(async () => api.finishClose(await saveDocument(false)));
+api.onOpenPath((filePath) => openPath(filePath));
 api.onE2eRun(async ({ directory }) => {
   const result = { passed: false, assertions: {}, errors: [] };
   const fixturePath = `${directory}\\01-完整语法.md`;
