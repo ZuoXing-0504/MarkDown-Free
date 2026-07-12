@@ -1,0 +1,27 @@
+name: Bug 报告
+description: 报告可复现的问题
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: textarea
+    attributes:
+      label: 问题描述
+      description: 请说明实际结果和期望结果。
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 复现步骤
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: 清墨版本
+      placeholder: 例如 0.3.0
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Windows 版本
+    validations:
+      required: true

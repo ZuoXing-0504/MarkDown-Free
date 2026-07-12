@@ -1,55 +1,30 @@
-# CleanMark
+# 清墨（CleanMark）
 
-CleanMark is a clean-room desktop Markdown editor built from scratch with
-Electron. It does not import or execute Typora code, ASAR archives, V8 bytecode,
-assets, or proprietary bridge implementations.
+清墨是一款从零独立开发的中文桌面 Markdown 编辑器，基于 Electron，适用于 Windows。项目不导入、执行或分发 Typora 的代码、ASAR、V8 字节码、资源或专有桥接实现。
 
-## Features
+[项目主页](https://github.com/ZuoXing-0504/MarkDown-Free) · [问题反馈](https://github.com/ZuoXing-0504/MarkDown-Free/issues) · 如果项目对你有帮助，欢迎点亮 Star。
 
-- Open, edit, save, and save-as for Markdown and text files
-- Recursive Markdown file browser for opened folders
-- Live split preview with GitHub-flavored Markdown and syntax highlighting
-- Sanitized preview HTML using DOMPurify
-- Editor, split, and preview layouts
-- Light, dark, and system themes
-- Document search, drag-and-drop opening, formatting helpers, and word count
-- Optional debounced auto save
-- Unsaved-change protection when replacing or closing a document
+## 功能
 
-## Run
+- 新建、打开、保存、另存为和文件夹树浏览
+- 编辑、分屏、预览三种模式，GFM、表格、任务列表与代码高亮
+- 撤销、重做、查找、格式工具栏、主题、字词与光标统计
+- 可选自动保存、未保存关闭保护和崩溃草稿恢复
+- 原子保存和外部修改冲突检测，避免静默覆盖其他程序的更改
+- UTF-8、UTF-16 LE/BE、GB18030 和换行风格检测与保留
+- 相对本地图片支持；远程图片默认阻止，点击后才加载
+- DOMPurify 清洗、Electron 沙箱、隔离上下文和受限 IPC
 
-Requirements: Node.js 22 or newer and npm.
+## 本地运行
+
+需要 Node.js 22 或更新版本和 npm。
 
 ```powershell
-npm install
+npm ci
 npm start
 ```
 
-## Windows installer
-
-This project uses Electron Packager and Inno Setup 6.7 or newer. The installer
-is per-user, requires no administrator privileges, uses the confirmed CleanMark
-icon, and optionally adds CleanMark to the Windows Open With list for `.md` and
-`.markdown` files.
-
-```powershell
-npm run installer:win
-```
-
-The output is `release/installer/清墨-0.2.1-安装程序.exe`. Generated release
-artifacts are intentionally excluded from Git; publish the installer through a
-GitHub Release instead.
-
-If Electron's binary download is unavailable from the default host, install it
-through an accessible mirror and start again:
-
-```powershell
-$env:ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/"
-node .\node_modules\electron\install.js
-npm start
-```
-
-## Verify
+## 验证
 
 ```powershell
 npm run check
@@ -57,49 +32,46 @@ npm run smoke
 npm run test:e2e
 ```
 
-`check` bundles the renderer and parses the Electron scripts. `smoke` launches a
-hidden real Electron window and verifies renderer loading, the sandbox bridge,
-IPC file reading/writing, Markdown rendering, and removal of script elements
-from preview HTML. `test:e2e` creates real Markdown files under `test-results`,
-then opens, edits, saves, saves-as, reopens, auto-saves, filters, renders, and
-validates them in Electron. See `COMPARISON.md` for the measured feature gap.
+端到端测试会真实创建和修改 Markdown 文件，覆盖打开、覆盖保存、另存为、自动保存、保存竞态、撤销/重做、外部冲突、UTF-16/GB18030、CRLF、相对图片、远程图片隐私、HTML 清洗和语法高亮。
 
-## Architecture
+## Windows 打包
 
-```text
-electron/main.cjs
-  Window, menus, dialogs, bounded file I/O, folder scanning
-           |
-           | Electron IPC
-           v
-electron/preload.cjs
-  Narrow contextBridge API; no generic IPC exposure
-           |
-           v
-src/renderer.js
-  Editor state, Markdown rendering, UI interactions
+构建便携应用：
+
+```powershell
+npm run package:win
 ```
 
-The renderer uses `contextIsolation`, Electron sandboxing, disabled Node
-integration, a restrictive Content Security Policy, sanitized preview output,
-and an allowlist for external URL protocols. File size and folder scan limits
-avoid accidentally loading unbounded input.
+构建中文安装器还需要 Inno Setup 6.7 或更新版本：
 
-## Project layout
+```powershell
+npm run installer:win
+```
 
-- `electron/main.cjs`: Electron main process and native operations
-- `electron/preload.cjs`: isolated renderer API
-- `src/index.html`: application structure and CSP
-- `src/styles.css`: responsive light/dark interface
-- `src/renderer.js`: document model, preview, sidebar, and commands
-- `scripts/build.mjs`: esbuild renderer bundle
-- `assets/icon`: SVG master, PNG sizes, and Windows ICO
-- `installer/cleanmark.iss`: Chinese per-user Inno Setup installer
-- `dist`: generated runtime assets; do not edit directly
+输出文件为 `release/installer/清墨-0.3.0-安装程序.exe`。安装器仅安装到当前用户的 `%LOCALAPPDATA%\Programs\清墨`，不需要管理员权限，可选创建桌面快捷方式和加入 `.md`、`.markdown` 的“打开方式”列表，不替换现有默认程序。
 
-## Current scope
+生成文件不进入 Git 历史；`v*` 标签会由 GitHub Actions 构建安装器、生成 SHA-256 并发布到 GitHub Release。
 
-This first version intentionally stays small. It does not yet provide tabs,
-image asset management, PDF export, Mermaid, math rendering, recovery snapshots,
-or packaged installers. Those can be added as independent features without
-depending on proprietary code.
+> 当前安装器没有商业代码签名，Windows 可能显示“未知发布者”或 SmartScreen 提示。请仅从本仓库 Release 下载并核对 SHA-256。代码签名需要开发者另行提供有效证书。
+
+Electron 下载受限时可临时使用镜像：
+
+```powershell
+$env:ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/"
+npm ci
+```
+
+## 项目结构
+
+- `electron/main.cjs`：窗口、菜单、安全文件 I/O、恢复和目录扫描
+- `electron/preload.cjs`：隔离的最小渲染进程接口
+- `src/renderer.js`：文档状态、预览、侧栏和交互
+- `src/index.html`、`src/styles.css`：中文界面和主题
+- `tests/fixtures`：真实 Markdown 流程测试数据
+- `scripts`：构建、图标、打包和测试脚本
+- `installer/cleanmark.iss`：仅当前用户的中文 Inno Setup 安装器
+- `RELEASE_CHECKLIST.md`：0.3.0 发布状态和外部阻塞项
+
+## 开源许可
+
+项目代码使用 [MIT](LICENSE) 许可证。第三方组件许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。安全报告方式见 [SECURITY.md](SECURITY.md)，贡献规则见 [CONTRIBUTING.md](CONTRIBUTING.md)。

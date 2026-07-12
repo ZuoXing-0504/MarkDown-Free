@@ -2,12 +2,15 @@
 
 const { app, BrowserWindow, dialog, ipcMain, Menu, shell } = require("electron");
 const fs = require("node:fs/promises");
+const crypto = require("node:crypto");
 const os = require("node:os");
 const path = require("node:path");
+const iconv = require("iconv-lite");
 
 const MARKDOWN_EXTENSIONS = new Set([".md", ".markdown", ".mdown", ".mkd", ".txt"]);
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_TREE_FILES = 2000;
+const RECOVERY_FILE = "recovery-draft.json";
 const windowState = new WeakMap();
 const smokeTest = process.argv.includes("--smoke-test");
 const e2eTest = process.argv.includes("--e2e-test");
@@ -26,6 +29,84 @@ function stateFor(window) {
     windowState.set(window, { dirty: false, allowClose: false, closePromptOpen: false });
   }
   return windowState.get(window);
+}
+
+function fingerprint(buffer) {
+  return crypto.createHash("sha256").update(buffer).digest("hex");
+}
+
+function detectTextEncoding(buffer) {
+  if (buffer.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf]))) {
+    return { encoding: "utf8", bom: true, offset: 3 };
+  }
+  if (buffer.subarray(0, 2).equals(Buffer.from([0xff, 0xfe]))) {
+    return { encoding: "utf16le", bom: true, offset: 2 };
+  }
+  if (buffer.subarray(0, 2).equals(Buffer.from([0xfe, 0xff]))) {
+    return { encoding: "utf16be", bom: true, offset: 2 };
+  }
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+    return { encoding: "utf8", bom: false, offset: 0 };
+  } catch {
+    return { encoding: "gb18030", bom: false, offset: 0 };
+  }
+}
+
+function decodeText(buffer) {
+  const detected = detectTextEncoding(buffer);
+  const decoded = iconv.decode(buffer.subarray(detected.offset), detected.encoding);
+  const eol = decoded.includes("\r\n") ? "crlf" : decoded.includes("\r") ? "cr" : "lf";
+  return {
+    content: decoded.replace(/\r\n?/g, "\n"),
+    encoding: detected.encoding,
+    bom: detected.bom,
+    eol,
+  };
+}
+
+function encodeText(content, encoding = "utf8", bom = false, eol = "lf") {
+  const newline = eol === "crlf" ? "\r\n" : eol === "cr" ? "\r" : "\n";
+  const normalized = content.replace(/\r\n?/g, "\n").replace(/\n/g, newline);
+  const encoded = iconv.encode(normalized, encoding);
+  if (!bom) return encoded;
+  const prefixes = {
+    utf8: Buffer.from([0xef, 0xbb, 0xbf]),
+    utf16le: Buffer.from([0xff, 0xfe]),
+    utf16be: Buffer.from([0xfe, 0xff]),
+  };
+  return prefixes[encoding] ? Buffer.concat([prefixes[encoding], encoded]) : encoded;
+}
+
+async function atomicWrite(filePath, data) {
+  const directory = path.dirname(filePath);
+  const temporaryPath = path.join(directory, `.${path.basename(filePath)}.${process.pid}.${crypto.randomUUID()}.tmp`);
+  let handle;
+  try {
+    handle = await fs.open(temporaryPath, "wx", 0o600);
+    await handle.writeFile(data);
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    await fs.rename(temporaryPath, filePath);
+    let directoryHandle;
+    try {
+      directoryHandle = await fs.open(directory, "r");
+      await directoryHandle.sync();
+    } catch {
+      // Directory fsync is not supported on every Windows filesystem.
+    } finally {
+      if (directoryHandle) await directoryHandle.close().catch(() => {});
+    }
+  } catch (error) {
+    if (handle) await handle.close().catch(() => {});
+    await fs.rm(temporaryPath, { force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+function recoveryPath() {
+  return path.join(app.getPath("userData"), RECOVERY_FILE);
 }
 
 function sendCommand(command) {
@@ -101,7 +182,8 @@ async function readTextFile(filePath) {
   const stats = await fs.stat(filePath);
   if (!stats.isFile()) throw new Error("所选路径不是文件。");
   if (stats.size > MAX_FILE_BYTES) throw new Error("暂不支持大于 20 MB 的文件。");
-  return { filePath, content: await fs.readFile(filePath, "utf8") };
+  const buffer = await fs.readFile(filePath);
+  return { filePath, ...decodeText(buffer), fingerprint: fingerprint(buffer) };
 }
 
 async function scanDirectory(directory, state, depth = 0) {
@@ -190,8 +272,64 @@ function registerIpc() {
       filePath = result.filePath;
     }
 
-    await fs.writeFile(filePath, payload.content, "utf8");
-    return { filePath };
+    if (payload.baseFingerprint && !payload.force) {
+      try {
+        const current = await fs.readFile(filePath);
+        const currentFingerprint = fingerprint(current);
+        if (currentFingerprint !== payload.baseFingerprint) {
+          return { conflict: true, filePath, currentFingerprint };
+        }
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+        return { conflict: true, filePath, missing: true };
+      }
+    }
+
+    const data = encodeText(payload.content, payload.encoding, payload.bom, payload.eol);
+    await atomicWrite(filePath, data);
+    return { filePath, fingerprint: fingerprint(data), encoding: payload.encoding || "utf8", bom: Boolean(payload.bom), eol: payload.eol || "lf" };
+  });
+
+  ipcMain.handle("recovery:get", async () => {
+    try {
+      const value = JSON.parse(await fs.readFile(recoveryPath(), "utf8"));
+      return value && typeof value.content === "string" ? value : null;
+    } catch (error) {
+      if (error.code === "ENOENT" || error instanceof SyntaxError) return null;
+      throw error;
+    }
+  });
+
+  ipcMain.handle("recovery:write", async (_event, draft) => {
+    if (!draft || typeof draft.content !== "string") throw new Error("恢复草稿无效。");
+    if (Buffer.byteLength(draft.content, "utf8") > MAX_FILE_BYTES) throw new Error("恢复草稿超过 20 MB。");
+    await fs.mkdir(path.dirname(recoveryPath()), { recursive: true });
+    await atomicWrite(recoveryPath(), Buffer.from(`${JSON.stringify({
+      filePath: typeof draft.filePath === "string" ? draft.filePath : null,
+      content: draft.content,
+      encoding: draft.encoding || "utf8",
+      bom: Boolean(draft.bom),
+      eol: draft.eol || "lf",
+      fingerprint: typeof draft.fingerprint === "string" ? draft.fingerprint : null,
+      savedAt: new Date().toISOString(),
+    })}\n`, "utf8"));
+    return true;
+  });
+
+  ipcMain.handle("recovery:clear", async () => {
+    await fs.rm(recoveryPath(), { force: true });
+    return true;
+  });
+
+  ipcMain.handle("test:write-external", async (_event, filePath, content) => {
+    if (!e2eTest) throw new Error("测试接口仅在端到端测试中可用。");
+    await fs.writeFile(filePath, content, "utf8");
+    return true;
+  });
+
+  ipcMain.handle("test:list-directory", async (_event, directory) => {
+    if (!e2eTest) throw new Error("测试接口仅在端到端测试中可用。");
+    return fs.readdir(directory);
   });
 
   ipcMain.handle("shell:open-external", async (_event, url) => {
@@ -240,6 +378,8 @@ function createWindow(initialPath = null) {
   });
 
   stateFor(window);
+  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  window.webContents.on("will-navigate", (event) => event.preventDefault());
   if (initialPath) {
     window.webContents.once("did-finish-load", () => openPathInWindow(window, initialPath));
   }
@@ -267,6 +407,7 @@ function createWindow(initialPath = null) {
     if (result.response === 0) {
       window.webContents.send("app:save-before-close");
     } else if (result.response === 1) {
+      await fs.rm(recoveryPath(), { force: true }).catch(() => {});
       state.allowClose = true;
       window.close();
     }

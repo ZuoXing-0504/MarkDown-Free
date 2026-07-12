@@ -1,0 +1,16 @@
+name: 功能建议
+description: 提议新功能或改进
+title: "[功能] "
+labels: [enhancement]
+body:
+  - type: textarea
+    attributes:
+      label: 使用场景
+      description: 请说明要解决的问题，而不只是功能名称。
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 建议方案
+    validations:
+      required: true

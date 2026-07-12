@@ -19,6 +19,7 @@ const elements = {
   themeButton: document.querySelector("#theme-button"),
   findPanel: document.querySelector("#find-panel"),
   findInput: document.querySelector("#find-input"),
+  encodingStatus: document.querySelector("#encoding-status"),
 };
 
 const state = {
@@ -33,6 +34,11 @@ const state = {
   revision: 0,
   documentToken: 0,
   savedContent: "",
+  fingerprint: null,
+  encoding: "utf8",
+  bom: false,
+  eol: "lf",
+  recoveryTimer: null,
 };
 
 const welcomeDocument = `# 欢迎使用清墨
@@ -104,10 +110,23 @@ function updateCursorStatus() {
 function renderMarkdown() {
   const markdown = elements.editor.value;
   const rendered = marked.parse(markdown);
-  elements.preview.innerHTML = DOMPurify.sanitize(rendered, {
+  const sanitized = DOMPurify.sanitize(rendered, {
     USE_PROFILES: { html: true },
     ADD_ATTR: ["target", "rel"],
   });
+  const template = document.createElement("template");
+  template.innerHTML = sanitized;
+  template.content.querySelectorAll('img[src]').forEach((image) => {
+    const source = image.getAttribute("src");
+    if (!/^https?:\/\//i.test(source || "")) return;
+    const button = document.createElement("button");
+    button.className = "remote-image-button";
+    button.type = "button";
+    button.dataset.remoteImage = source;
+    button.textContent = "远程图片已阻止，点击后加载";
+    image.replaceWith(button);
+  });
+  elements.preview.replaceChildren(template.content);
   addHeadingAnchors();
   resolvePreviewImages();
   elements.preview.querySelectorAll("pre code").forEach((block) => hljs.highlightElement(block));
@@ -154,11 +173,29 @@ function scheduleAutosave() {
   }, 900);
 }
 
+function scheduleRecovery() {
+  if (state.recoveryTimer) window.clearTimeout(state.recoveryTimer);
+  if (!state.dirty) return;
+  const documentToken = state.documentToken;
+  state.recoveryTimer = window.setTimeout(() => {
+    if (documentToken !== state.documentToken || !state.dirty) return;
+    api.writeRecovery({
+      filePath: state.filePath,
+      content: elements.editor.value,
+      encoding: state.encoding,
+      bom: state.bom,
+      eol: state.eol,
+      fingerprint: state.fingerprint,
+    }).catch(reportError);
+  }, 500);
+}
+
 function handleEditorInput() {
   state.revision += 1;
   setDirty(elements.editor.value !== state.savedContent);
   scheduleRender();
   scheduleAutosave();
+  scheduleRecovery();
 }
 
 function resetDocumentState() {
@@ -166,10 +203,15 @@ function resetDocumentState() {
   state.autosaveTimer = null;
   state.documentToken += 1;
   state.revision = 0;
+  if (state.recoveryTimer) window.clearTimeout(state.recoveryTimer);
+  state.recoveryTimer = null;
 }
 
 async function confirmDiscard() {
-  return !state.dirty || window.confirm("放弃当前文档中尚未保存的更改吗？");
+  if (!state.dirty) return true;
+  if (!window.confirm("放弃当前文档中尚未保存的更改吗？")) return false;
+  await api.clearRecovery();
+  return true;
 }
 
 function loadDocument(result) {
@@ -177,7 +219,14 @@ function loadDocument(result) {
   state.filePath = result.filePath;
   elements.editor.value = result.content;
   state.savedContent = result.content;
+  state.fingerprint = result.fingerprint || null;
+  state.encoding = result.encoding || "utf8";
+  state.bom = Boolean(result.bom);
+  state.eol = result.eol || "lf";
+  const encodingNames = { utf8: "UTF-8", utf16le: "UTF-16 LE", utf16be: "UTF-16 BE", gb18030: "GB18030" };
+  elements.encodingStatus.textContent = `${encodingNames[state.encoding] || state.encoding} · ${state.eol.toUpperCase()}`;
   setDirty(false);
+  api.clearRecovery().catch(reportError);
   updateTitle();
   renderMarkdown();
   updateCursorStatus();
@@ -192,7 +241,13 @@ async function newDocument() {
   state.filePath = null;
   elements.editor.value = "";
   state.savedContent = "";
+  state.fingerprint = null;
+  state.encoding = "utf8";
+  state.bom = false;
+  state.eol = "lf";
+  elements.encodingStatus.textContent = "UTF-8 · LF";
   setDirty(false);
+  api.clearRecovery().catch(reportError);
   updateTitle();
   renderMarkdown();
   highlightActiveFile();
@@ -225,12 +280,36 @@ async function saveDocument(saveAs = false) {
   const content = elements.editor.value;
   const originalPath = state.filePath;
   try {
-    const result = await api.saveFile(saveAs ? null : originalPath, content);
+    const options = {
+      baseFingerprint: saveAs ? null : state.fingerprint,
+      encoding: saveAs ? "utf8" : state.encoding,
+      bom: saveAs ? false : state.bom,
+      eol: saveAs ? "lf" : state.eol,
+    };
+    let result = await api.saveFile(saveAs ? null : originalPath, content, options);
     if (!result) return false;
+    if (result.conflict) {
+      const overwrite = window.confirm(
+        result.missing
+          ? "该文件已被其他程序删除。是否重新创建并覆盖保存？"
+          : "该文件已被其他程序修改。继续会覆盖外部更改，是否仍要保存？",
+      );
+      if (!overwrite) {
+        setStatus("已取消保存，外部更改未被覆盖。", 4500);
+        return false;
+      }
+      result = await api.saveFile(saveAs ? null : originalPath, content, { ...options, force: true });
+      if (!result) return false;
+    }
     if (documentToken !== state.documentToken) return true;
     state.filePath = result.filePath;
     state.savedContent = content;
+    state.fingerprint = result.fingerprint;
+    state.encoding = result.encoding;
+    state.bom = result.bom;
+    state.eol = result.eol;
     setDirty(elements.editor.value !== state.savedContent);
+    if (!state.dirty) await api.clearRecovery();
     updateTitle();
     highlightActiveFile();
     setStatus(`已保存 ${baseName(result.filePath)}`);
@@ -444,6 +523,14 @@ elements.editor.addEventListener("keydown", (event) => {
 });
 
 elements.preview.addEventListener("click", (event) => {
+  const remoteImageButton = event.target.closest("[data-remote-image]");
+  if (remoteImageButton) {
+    const image = document.createElement("img");
+    image.src = remoteImageButton.dataset.remoteImage;
+    image.alt = "远程图片";
+    remoteImageButton.replaceWith(image);
+    return;
+  }
   const link = event.target.closest("a[href]");
   if (!link) return;
   const href = link.getAttribute("href");
@@ -506,6 +593,9 @@ api.onE2eRun(async ({ directory }) => {
   const savedAsPath = `${directory}\\02-另存为.md`;
   const autosavePath = `${directory}\\03-自动保存.md`;
   const racePath = `${directory}\\04-保存竞态.md`;
+  const conflictPath = `${directory}\\08-外部冲突.md`;
+  const utf16Path = `${directory}\\06-UTF16LE-CRLF.md`;
+  const gb18030Path = `${directory}\\07-GB18030.md`;
 
   const assert = (name, condition, detail) => {
     result.assertions[name] = Boolean(condition);
@@ -521,13 +611,18 @@ api.onE2eRun(async ({ directory }) => {
     assert("斜体渲染", elements.preview.querySelector("em")?.textContent === "斜体", "缺少 em");
     assert("任务列表渲染", elements.preview.querySelectorAll('input[type="checkbox"]').length === 2, "任务列表数量错误");
     assert("表格渲染", elements.preview.querySelectorAll("table tbody tr").length === 2, "表格行数错误");
-    assert("代码高亮", Boolean(elements.preview.querySelector("pre code.hljs")), "代码块未高亮");
+    const highlightedToken = elements.preview.querySelector("pre code.hljs .hljs-keyword, pre code.hljs .hljs-string");
+    assert("代码高亮", Boolean(highlightedToken) && getComputedStyle(highlightedToken).color !== getComputedStyle(elements.preview.querySelector("pre code")).color, "代码块缺少实际着色");
     assert("相对图片解析", elements.preview.querySelector("img")?.src.includes("assets/test-image.svg"), elements.preview.querySelector("img")?.src);
     assert("危险脚本清洗", !elements.preview.querySelector("script") && !window.__e2eUnsafe, "script 未清洗");
     const anchor = [...elements.preview.querySelectorAll('a[href^="#"]')].find(
       (link) => decodeURIComponent(link.getAttribute("href")) === "#章节二",
     );
     assert("锚点保留", Boolean(anchor && elements.preview.querySelector("#章节二")), anchor?.getAttribute("href"));
+    elements.editor.value += "\n\n![远程](https://example.invalid/tracker.png)";
+    renderMarkdown();
+    assert("远程图片默认阻止", !elements.preview.querySelector('img[src^="https:"]') && Boolean(elements.preview.querySelector("[data-remote-image]")), "远程图片被静默加载");
+    loadDocument(await api.readFile(fixturePath));
 
     elements.editor.value += "\n\n## 编辑后保存\n\n这是实际写入磁盘的中文内容。";
     handleEditorInput();
@@ -574,6 +669,45 @@ api.onE2eRun(async ({ directory }) => {
     const raceSaved = await api.readFile(racePath);
     assert("保存竞态最终落盘", raceSaved.content.includes("保存期间继续输入"), "最终内容未落盘");
 
+    await api.saveFile(conflictPath, "# 原始内容");
+    loadDocument(await api.readFile(conflictPath));
+    elements.editor.value = "# 清墨中的更改";
+    handleEditorInput();
+    await api.writeExternalForTest(conflictPath, "# 外部程序的更改");
+    const conflict = await api.saveFile(conflictPath, elements.editor.value, {
+      baseFingerprint: state.fingerprint,
+      encoding: state.encoding,
+      bom: state.bom,
+      eol: state.eol,
+    });
+    assert("外部修改冲突检测", conflict.conflict === true, JSON.stringify(conflict));
+    assert("冲突不覆盖外部内容", (await api.readFile(conflictPath)).content === "# 外部程序的更改", "外部内容已被覆盖");
+
+    loadDocument(await api.readFile(utf16Path));
+    assert("UTF-16 LE 识别", state.encoding === "utf16le" && state.bom && state.eol === "crlf", `${state.encoding}/${state.bom}/${state.eol}`);
+    elements.editor.value += "\n新增中文。";
+    handleEditorInput();
+    await saveDocument(false);
+    const utf16Reloaded = await api.readFile(utf16Path);
+    assert("UTF-16 与 CRLF 保留", utf16Reloaded.encoding === "utf16le" && utf16Reloaded.bom && utf16Reloaded.eol === "crlf" && utf16Reloaded.content.includes("新增中文。"), JSON.stringify(utf16Reloaded));
+
+    loadDocument(await api.readFile(gb18030Path));
+    assert("GB18030 识别", state.encoding === "gb18030" && state.eol === "crlf", `${state.encoding}/${state.eol}`);
+    elements.editor.value += "\n新增内容。";
+    handleEditorInput();
+    await saveDocument(false);
+    const gbReloaded = await api.readFile(gb18030Path);
+    assert("GB18030 与 CRLF 保留", gbReloaded.encoding === "gb18030" && gbReloaded.eol === "crlf" && gbReloaded.content.includes("新增内容。"), JSON.stringify(gbReloaded));
+
+    const directoryEntries = await api.listDirectoryForTest(directory);
+    assert("原子保存临时文件清理", !directoryEntries.some((name) => name.endsWith(".tmp")), directoryEntries.join(", "));
+
+    await api.writeRecovery({ filePath: null, content: "# 未命名恢复草稿", encoding: "utf8", bom: false, eol: "lf" });
+    const recoveredDraft = await api.getRecovery();
+    assert("未命名草稿恢复读取", recoveredDraft?.content === "# 未命名恢复草稿" && recoveredDraft.filePath === null, JSON.stringify(recoveredDraft));
+    await api.clearRecovery();
+    assert("恢复草稿明确清除", (await api.getRecovery()) === null, "恢复草稿仍然存在");
+
     elements.editor.focus();
     elements.editor.setSelectionRange(elements.editor.value.length, elements.editor.value.length);
     document.execCommand("insertText", false, "\n撤销重做测试");
@@ -619,6 +753,32 @@ api.onE2eRun(async ({ directory }) => {
   api.reportE2e(result);
 });
 
+async function restoreRecovery() {
+  try {
+    const draft = await api.getRecovery();
+    if (!draft) return;
+    if (!window.confirm(`发现 ${draft.savedAt ? new Date(draft.savedAt).toLocaleString() : "上次"} 的未保存草稿，是否恢复？`)) {
+      await api.clearRecovery();
+      return;
+    }
+    resetDocumentState();
+    state.filePath = draft.filePath || null;
+    state.encoding = draft.encoding || "utf8";
+    state.bom = Boolean(draft.bom);
+    state.eol = draft.eol || "lf";
+    state.fingerprint = draft.fingerprint || null;
+    state.savedContent = "";
+    elements.editor.value = draft.content;
+    updateTitle();
+    renderMarkdown();
+    updateCursorStatus();
+    setDirty(true);
+    setStatus("已恢复未保存草稿", 4500);
+  } catch (error) {
+    reportError(error);
+  }
+}
+
 elements.editor.value = welcomeDocument;
 elements.autosave.checked = state.autosave;
 setView(state.view);
@@ -627,3 +787,4 @@ updateTitle();
 renderMarkdown();
 updateCursorStatus();
 setDirty(false);
+restoreRecovery();

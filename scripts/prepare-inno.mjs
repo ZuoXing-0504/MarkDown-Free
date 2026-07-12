@@ -12,15 +12,16 @@ const sourceUrl =
 
 await mkdir(outputDirectory, { recursive: true });
 
+let prepared = false;
 try {
   await access(destination);
   console.log(`Using bundled translation ${fileURLToPath(destination)}`);
-  process.exit(0);
+  prepared = true;
 } catch {
   // Download only when a fresh checkout does not contain the bundled translation.
 }
 
-try {
+if (!prepared) try {
   const response = await fetch(sourceUrl);
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   await writeFile(destination, Buffer.from(await response.arrayBuffer()));

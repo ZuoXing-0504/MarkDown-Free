@@ -1,6 +1,6 @@
 {
   "name": "cleanmark",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "清墨：一款从零独立开发的桌面 Markdown 编辑器。",
   "productName": "清墨",
   "author": {
@@ -17,19 +17,20 @@
     "check": "npm run build && node --check electron/main.cjs && node --check electron/preload.cjs",
     "smoke": "npm run build && electron . --smoke-test",
     "test:e2e": "npm run build && node scripts/prepare-e2e.mjs && electron . --e2e-test --e2e-dir=test-results/md-workspace",
-    "build:icon": "node scripts/build-icon.mjs && python scripts/build-ico.py",
+    "build:icon": "node scripts/build-icon.mjs",
     "package:win": "npm run build:icon && npm run build && node scripts/package-win.mjs",
-    "installer:win": "npm run package:win && node scripts/prepare-inno.mjs && \"C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe\" installer/cleanmark.iss"
+    "installer:win": "npm run package:win && node scripts/build-installer.mjs"
   },
   "dependencies": {
-    "dompurify": "3.4.12",
-    "highlight.js": "11.11.1",
-    "marked": "18.0.6"
+    "iconv-lite": "0.7.3"
   },
   "devDependencies": {
     "@electron/packager": "20.0.2",
+    "dompurify": "3.4.12",
     "electron": "43.1.0",
     "esbuild": "0.28.1",
+    "highlight.js": "11.11.1",
+    "marked": "18.0.6",
     "sharp": "0.34.5"
   }
 }

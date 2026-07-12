@@ -1,6 +1,8 @@
 #define AppName "清墨"
 #define AppEnglishName "CleanMark"
-#define AppVersion "0.2.1"
+#ifndef AppVersion
+  #define AppVersion "0.3.0"
+#endif
 #define AppPublisher "ZuoXing-0504"
 #define AppURL "https://github.com/ZuoXing-0504/MarkDown-Free"
 #define AppSupportURL "https://github.com/ZuoXing-0504/MarkDown-Free/issues"
@@ -22,7 +24,7 @@ DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 OutputDir=..\release\installer
-OutputBaseFilename=清墨-0.2.1-安装程序
+OutputBaseFilename=清墨-{#AppVersion}-安装程序
 SetupIconFile=..\assets\icon\cleanmark.ico
 UninstallDisplayIcon={app}\{#AppExeName}
 UninstallDisplayName={#AppName}
