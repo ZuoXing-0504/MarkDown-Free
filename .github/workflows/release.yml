@@ -21,9 +21,14 @@ jobs:
       - run: npm run smoke
       - run: npm run test:e2e
       - run: npm run installer:win
-      - name: 生成 SHA-256
+      - name: 准备 GitHub Release 文件
         shell: powershell
-        run: Get-FileHash "release/installer/*.exe" -Algorithm SHA256 | ForEach-Object { "$($_.Hash)  $([IO.Path]::GetFileName($_.Path))" } | Set-Content -Encoding ascii "release/installer/SHA256SUMS.txt"
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $source = Get-Item "release/installer/*.exe"
+          $releaseName = "CleanMark-$version-Setup.exe"
+          Copy-Item -LiteralPath $source.FullName -Destination "release/installer/$releaseName"
+          Get-FileHash "release/installer/$releaseName" -Algorithm SHA256 | ForEach-Object { "$($_.Hash)  $releaseName" } | Set-Content -Encoding ascii "release/installer/SHA256SUMS.txt"
       - uses: actions/upload-artifact@v4
         with:
           name: cleanmark-windows-installer
@@ -32,7 +37,7 @@ jobs:
         with:
           generate_release_notes: true
           files: |
-            release/installer/*.exe
+            release/installer/CleanMark-*-Setup.exe
             release/installer/SHA256SUMS.txt
           body: |
             清墨 Windows 安装器，仅安装到当前用户目录，不需要管理员权限。

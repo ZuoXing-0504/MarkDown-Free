@@ -48,7 +48,7 @@ npm run package:win
 npm run installer:win
 ```
 
-输出文件为 `release/installer/清墨-0.3.0-安装程序.exe`。安装器仅安装到当前用户的 `%LOCALAPPDATA%\Programs\清墨`，不需要管理员权限，可选创建桌面快捷方式和加入 `.md`、`.markdown` 的“打开方式”列表，不替换现有默认程序。
+本机输出文件为 `release/installer/清墨-0.3.1-安装程序.exe`；GitHub Release 为避免平台自动剥离中文文件名，使用 `CleanMark-0.3.1-Setup.exe`。安装器仅安装到当前用户的 `%LOCALAPPDATA%\Programs\清墨`，不需要管理员权限，可选创建桌面快捷方式和加入 `.md`、`.markdown` 的“打开方式”列表，不替换现有默认程序。
 
 生成文件不进入 Git 历史；`v*` 标签会由 GitHub Actions 构建安装器、生成 SHA-256 并发布到 GitHub Release。
 

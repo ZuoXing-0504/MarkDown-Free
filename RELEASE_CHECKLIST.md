@@ -1,4 +1,4 @@
-# 清墨 0.3.0 发布清单
+# 清墨 0.3.1 发布清单
 
 ## 功能与数据安全
 
@@ -15,12 +15,12 @@
 
 ## 构建与安装
 
-- [x] 版本统一取自 `package.json`（0.3.0）
+- [x] 版本统一取自 `package.json`（0.3.1）
 - [x] Electron 本地 ZIP 缓存可选，干净克隆可联网构建
 - [x] 图标完全使用 Node.js 生成，不依赖 Python/Pillow
 - [x] 生产包排除测试、源码、构建脚本和安装脚本
 - [x] 当前用户中文安装器、可选桌面快捷方式与“打开方式”
-- [x] 安装器文件名：`清墨-0.3.0-安装程序.exe`
+- [x] 本机安装器：`清墨-0.3.1-安装程序.exe`；GitHub 资产：`CleanMark-0.3.1-Setup.exe`
 - [x] 安装器 SHA-256 校验值随 GitHub Release 生成
 - [ ] Windows 代码签名（需要开发者提供有效代码签名证书）
 
@@ -32,7 +32,7 @@
 - [x] Windows CI、标签发布工作流、Dependabot
 - [x] Bug/功能 Issue 模板、PR 模板、贡献与安全说明
 - [x] 源码推送至 GitHub
-- [x] `v0.3.0` 标签触发 GitHub Actions 自动创建 Release
+- [x] `v0.3.1` 标签触发 GitHub Actions 自动创建 Release
 - [x] 仓库简介和项目主页信息
 - [ ] `main` 分支保护（个人仓库暂不启用，避免阻断单人直接发布）
 - [ ] 自动更新（待签名发布链稳定后实现）
