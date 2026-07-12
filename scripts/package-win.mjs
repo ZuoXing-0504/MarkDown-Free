@@ -14,7 +14,16 @@ const outputPaths = await packager({
   asar: true,
   appVersion: "0.2.1",
   buildVersion: "0.2.1",
+  appCopyright: "Copyright © 2026 ZuoXing-0504",
   electronZipDir: fileURLToPath(new URL("../.electron-zips", import.meta.url)),
+  icon: fileURLToPath(new URL("../assets/icon/cleanmark.ico", import.meta.url)),
+  win32metadata: {
+    CompanyName: "ZuoXing-0504",
+    FileDescription: "清墨 Markdown 编辑器",
+    OriginalFilename: "清墨.exe",
+    ProductName: "清墨",
+    InternalName: "CleanMark",
+  },
   ignore: [
     /^\/(?:release|tests|test-results|scripts|src|\.electron-zips)(?:\/|$)/,
     /\.map$/,

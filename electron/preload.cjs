@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld("cleanmark", {
   pathForDroppedFile: (file) => webUtils.getPathForFile(file),
   onCommand: (callback) => subscribe("app:command", callback),
   onSaveBeforeClose: (callback) => subscribe("app:save-before-close", callback),
+  onOpenPath: (callback) => subscribe("app:open-path", callback),
   onE2eRun: (callback) => subscribe("app:e2e-run", callback),
   reportE2e: (result) => ipcRenderer.send("app:e2e-result", result),
 });

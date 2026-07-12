@@ -25,6 +25,21 @@ npm install
 npm start
 ```
 
+## Windows installer
+
+This project uses Electron Packager and Inno Setup 6.7 or newer. The installer
+is per-user, requires no administrator privileges, uses the confirmed CleanMark
+icon, and optionally adds CleanMark to the Windows Open With list for `.md` and
+`.markdown` files.
+
+```powershell
+npm run installer:win
+```
+
+The output is `release/installer/清墨-0.2.1-安装程序.exe`. Generated release
+artifacts are intentionally excluded from Git; publish the installer through a
+GitHub Release instead.
+
 If Electron's binary download is unavailable from the default host, install it
 through an accessible mirror and start again:
 
@@ -78,6 +93,8 @@ avoid accidentally loading unbounded input.
 - `src/styles.css`: responsive light/dark interface
 - `src/renderer.js`: document model, preview, sidebar, and commands
 - `scripts/build.mjs`: esbuild renderer bundle
+- `assets/icon`: SVG master, PNG sizes, and Windows ICO
+- `installer/cleanmark.iss`: Chinese per-user Inno Setup installer
 - `dist`: generated runtime assets; do not edit directly
 
 ## Current scope

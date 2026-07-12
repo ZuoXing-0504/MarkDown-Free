@@ -13,6 +13,9 @@ const smokeTest = process.argv.includes("--smoke-test");
 const e2eTest = process.argv.includes("--e2e-test");
 const e2eDirectoryArgument = process.argv.find((argument) => argument.startsWith("--e2e-dir="));
 const e2eDirectory = e2eDirectoryArgument ? path.resolve(e2eDirectoryArgument.slice("--e2e-dir=".length)) : null;
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!gotSingleInstanceLock) app.quit();
 
 if (smokeTest || e2eTest) {
   app.setPath("userData", path.join(os.tmpdir(), `cleanmark-test-${process.pid}`));
@@ -28,6 +31,20 @@ function stateFor(window) {
 function sendCommand(command) {
   const window = BrowserWindow.getFocusedWindow();
   if (window) window.webContents.send("app:command", command);
+}
+
+function markdownPathFromArgs(argumentsList) {
+  return argumentsList.find((argument) => {
+    if (!argument || argument.startsWith("--")) return false;
+    return MARKDOWN_EXTENSIONS.has(path.extname(argument).toLowerCase());
+  });
+}
+
+function openPathInWindow(window, filePath) {
+  if (!window || !filePath) return;
+  window.webContents.send("app:open-path", path.resolve(filePath));
+  if (window.isMinimized()) window.restore();
+  window.focus();
 }
 
 function buildMenu() {
@@ -205,7 +222,7 @@ function registerIpc() {
   });
 }
 
-function createWindow() {
+function createWindow(initialPath = null) {
   const window = new BrowserWindow({
     width: 1320,
     height: 860,
@@ -223,6 +240,9 @@ function createWindow() {
   });
 
   stateFor(window);
+  if (initialPath) {
+    window.webContents.once("did-finish-load", () => openPathInWindow(window, initialPath));
+  }
   window.loadFile(path.join(__dirname, "..", "dist", "index.html"));
 
   window.on("close", async (event) => {
@@ -329,10 +349,16 @@ app.whenReady().then(() => {
     app.exit(passed ? 0 : 1);
   });
   buildMenu();
-  createWindow();
+  const initialPath = markdownPathFromArgs(process.argv.slice(1));
+  createWindow(initialPath);
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+});
+
+app.on("second-instance", (_event, commandLine) => {
+  const window = BrowserWindow.getAllWindows()[0];
+  openPathInWindow(window, markdownPathFromArgs(commandLine.slice(1)));
 });
 
 app.on("window-all-closed", () => {

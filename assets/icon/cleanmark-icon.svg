@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="tile" x1="150" y1="100" x2="860" y2="930" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#173B63" />
+      <stop offset="0.55" stop-color="#102C4C" />
+      <stop offset="1" stop-color="#091B31" />
+    </linearGradient>
+    <linearGradient id="ink" x1="314" y1="268" x2="712" y2="760" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F8FCFF" />
+      <stop offset="0.72" stop-color="#CDEFFC" />
+      <stop offset="1" stop-color="#7AD4EE" />
+    </linearGradient>
+    <linearGradient id="accent" x1="438" y1="620" x2="728" y2="774" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#48D7D0" />
+      <stop offset="1" stop-color="#67BDF3" />
+    </linearGradient>
+    <filter id="shadow" x="80" y="80" width="864" height="864" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="28" stdDeviation="24" flood-color="#03101F" flood-opacity="0.38" />
+    </filter>
+  </defs>
+
+  <rect x="72" y="72" width="880" height="880" rx="220" fill="url(#tile)" filter="url(#shadow)" />
+  <rect x="88" y="88" width="848" height="848" rx="204" fill="none" stroke="#5DB9DA" stroke-opacity="0.18" stroke-width="8" />
+
+  <!-- An ink drop becomes a fountain-pen nib: clear even at small icon sizes. -->
+  <path
+    d="M512 194C449 283 337 394 337 526c0 104 77 185 175 185s175-81 175-185c0-132-112-243-175-332Z"
+    fill="url(#ink)"
+  />
+  <path d="M512 338 407 558l105 153 105-153-105-220Z" fill="#123455" opacity="0.97" />
+  <path d="m512 338-27 211 27 42 27-42-27-211Z" fill="url(#accent)" />
+  <circle cx="512" cy="562" r="27" fill="#EAFBFF" />
+
+  <!-- Markdown-inspired downstroke doubles as the nib's writing mark. -->
+  <path
+    d="M337 704h96v-82l79 85 79-85v82h96"
+    fill="none"
+    stroke="url(#accent)"
+    stroke-width="48"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <path d="m512 707-58-62h116l-58 62Z" fill="url(#accent)" />
+</svg>
