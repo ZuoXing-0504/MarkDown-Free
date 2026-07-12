@@ -1,4 +1,4 @@
-import { copyFile, mkdir, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -11,6 +11,14 @@ const sourceUrl =
   "https://raw.githubusercontent.com/kira-96/Inno-Setup-Chinese-Simplified-Translation/master/ChineseSimplified.isl";
 
 await mkdir(outputDirectory, { recursive: true });
+
+try {
+  await access(destination);
+  console.log(`Using bundled translation ${fileURLToPath(destination)}`);
+  process.exit(0);
+} catch {
+  // Download only when a fresh checkout does not contain the bundled translation.
+}
 
 try {
   const response = await fetch(sourceUrl);
