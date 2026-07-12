@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file: https:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>清墨</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="app" class="app" data-view="split">
+      <header class="topbar">
+        <div class="brand" aria-label="清墨">
+          <span class="brand-mark">墨</span>
+          <span>清墨</span>
+        </div>
+        <div class="document-title">
+          <span id="title">未命名</span><span id="dirty-dot" class="dirty-dot" hidden></span>
+        </div>
+        <div class="top-actions">
+          <button id="new-button" class="button" type="button">新建</button>
+          <button id="open-button" class="button" type="button">打开</button>
+          <button id="save-button" class="button primary" type="button">保存</button>
+        </div>
+      </header>
+
+      <aside class="sidebar" aria-label="文件浏览器">
+        <div class="sidebar-heading">
+          <span id="folder-name">文件</span>
+          <button id="folder-button" class="icon-button" type="button" title="打开文件夹">+</button>
+        </div>
+        <label class="filter-wrap">
+          <span class="sr-only">筛选文件</span>
+          <input id="file-filter" type="search" placeholder="筛选文件" autocomplete="off" />
+        </label>
+        <div id="file-tree" class="file-tree">
+          <div class="empty-state compact">打开文件夹以浏览 Markdown 文件。</div>
+        </div>
+        <div class="sidebar-footer">
+          <label class="setting-row">
+            <input id="autosave" type="checkbox" />
+            <span>自动保存</span>
+          </label>
+          <button id="theme-button" class="text-button" type="button">主题：跟随系统</button>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <div class="toolbar" aria-label="编辑工具栏">
+          <div class="format-actions">
+            <button id="undo-button" class="tool-button history-button" type="button" title="撤销 (Ctrl+Z)" aria-label="撤销">↶</button>
+            <button id="redo-button" class="tool-button history-button" type="button" title="重做 (Ctrl+Y)" aria-label="重做">↷</button>
+            <span class="toolbar-divider" aria-hidden="true"></span>
+            <button class="tool-button" type="button" data-format="bold" title="粗体 (Ctrl+B)"><strong>B</strong></button>
+            <button class="tool-button" type="button" data-format="italic" title="斜体 (Ctrl+I)"><em>I</em></button>
+            <button class="tool-button" type="button" data-format="heading" title="标题">标题</button>
+            <button class="tool-button" type="button" data-format="link" title="链接">链接</button>
+            <button class="tool-button" type="button" data-format="code" title="行内代码">代码</button>
+            <button class="tool-button" type="button" data-format="list" title="项目列表">列表</button>
+            <button class="tool-button" type="button" data-format="quote" title="引用">引用</button>
+          </div>
+          <div id="find-panel" class="find-panel" hidden>
+            <input id="find-input" type="search" placeholder="在文档中查找" />
+            <button id="find-next" class="tool-button" type="button">下一个</button>
+            <button id="find-close" class="tool-button" type="button" aria-label="关闭查找">×</button>
+          </div>
+          <div class="view-actions" role="group" aria-label="视图模式">
+            <button class="view-button" type="button" data-view-mode="editor">编辑</button>
+            <button class="view-button active" type="button" data-view-mode="split">分屏</button>
+            <button class="view-button" type="button" data-view-mode="preview">预览</button>
+          </div>
+        </div>
+
+        <div class="panes">
+          <section class="editor-pane" aria-label="Markdown 编辑器">
+            <textarea id="editor" spellcheck="true" aria-label="Markdown 源文本"></textarea>
+          </section>
+          <section class="preview-pane" aria-label="Markdown 预览">
+            <article id="preview" class="markdown-body"></article>
+          </section>
+        </div>
+
+        <footer class="statusbar">
+          <span id="status">就绪</span>
+          <span class="status-spacer"></span>
+          <span id="cursor-status">第 1 行，第 1 列</span>
+          <span id="word-count">0 字词</span>
+          <span>UTF-8</span>
+        </footer>
+      </main>
+    </div>
+    <script src="./renderer.js"></script>
+  </body>
+</html>
