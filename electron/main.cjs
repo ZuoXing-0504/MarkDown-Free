@@ -284,6 +284,9 @@ function createWindow(initialPath = null) {
           const fixture = await window.cleanmark.readFile(${JSON.stringify(fixturePath)});
           await window.cleanmark.saveFile(fixture.filePath, "# Updated by IPC");
           const editor = document.querySelector("#editor");
+          const repositoryLink = [...document.querySelectorAll("#preview a")].find(
+            (link) => link.href === "https://github.com/ZuoXing-0504/MarkDown-Free"
+          );
           editor.value = "# Rendered heading\\n\\n<script>window.__unsafe = true</script>";
           editor.dispatchEvent(new Event("input", { bubbles: true }));
           await new Promise((resolve) => setTimeout(resolve, 150));
@@ -294,6 +297,7 @@ function createWindow(initialPath = null) {
             renderedHeading: document.querySelector("#preview h1")?.textContent,
             scriptRemoved: !document.querySelector("#preview script") && !window.__unsafe,
             fixtureContent: fixture.content,
+            repositoryLink: Boolean(repositoryLink),
             title: document.title
           };
         })()`);
@@ -303,6 +307,7 @@ function createWindow(initialPath = null) {
           !result.hasEditor ||
           !result.hasPreview ||
           result.fixtureContent !== "# IPC fixture" ||
+          !result.repositoryLink ||
           savedContent !== "# Updated by IPC" ||
           result.renderedHeading !== "Rendered heading" ||
           !result.scriptRemoved

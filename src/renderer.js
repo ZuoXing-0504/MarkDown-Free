@@ -48,6 +48,10 @@ const welcomeDocument = `# 欢迎使用清墨
 
 > 本项目使用沙箱化的 Electron 渲染进程和受限文件系统桥接。
 
+## 支持清墨
+
+如果清墨对你有帮助，欢迎访问 [GitHub 项目仓库](https://github.com/ZuoXing-0504/MarkDown-Free) 并点亮 Star，感谢你的支持。
+
 \`\`\`js
 console.log("Markdown 已准备就绪。");
 \`\`\`
