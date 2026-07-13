@@ -164,7 +164,7 @@ function buildMenu() {
         { label: "分屏", accelerator: "CmdOrCtrl+2", click: () => sendCommand("view-split") },
         { label: "仅预览", accelerator: "CmdOrCtrl+3", click: () => sendCommand("view-preview") },
         { type: "separator" },
-        { label: "重新加载", role: "reload" },
+        { label: "重新加载", accelerator: "CmdOrCtrl+R", click: () => sendCommand("reload") },
         { label: "开发者工具", role: "toggleDevTools" },
         { type: "separator" },
         { label: "重置缩放", role: "resetZoom" },
@@ -211,6 +211,15 @@ async function scanDirectory(directory, state, depth = 0) {
 }
 
 function registerIpc() {
+  ipcMain.handle("app:get-initial-open-path", (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window) return null;
+    const state = stateFor(window);
+    const initialPath = state.initialPath || null;
+    state.initialPath = null;
+    return initialPath;
+  });
+
   ipcMain.handle("dialog:open-file", async (event) => {
     const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), {
       title: "打开 Markdown 文件",
@@ -358,6 +367,11 @@ function registerIpc() {
     state.allowClose = true;
     window.close();
   });
+
+  ipcMain.on("window:reload", (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (window) window.webContents.reload();
+  });
 }
 
 function createWindow(initialPath = null) {
@@ -377,12 +391,10 @@ function createWindow(initialPath = null) {
     },
   });
 
-  stateFor(window);
+  const state = stateFor(window);
+  state.initialPath = initialPath ? path.resolve(initialPath) : null;
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event) => event.preventDefault());
-  if (initialPath) {
-    window.webContents.once("did-finish-load", () => openPathInWindow(window, initialPath));
-  }
   window.loadFile(path.join(__dirname, "..", "dist", "index.html"));
 
   window.on("close", async (event) => {

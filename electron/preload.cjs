@@ -10,6 +10,7 @@ function subscribe(channel, callback) {
 
 contextBridge.exposeInMainWorld("cleanmark", {
   openFile: () => ipcRenderer.invoke("dialog:open-file"),
+  getInitialOpenPath: () => ipcRenderer.invoke("app:get-initial-open-path"),
   openFolder: () => ipcRenderer.invoke("dialog:open-folder"),
   scanFolderForTest: (directory) => ipcRenderer.invoke("test:scan-folder", directory),
   readFile: (filePath) => ipcRenderer.invoke("file:read", filePath),
@@ -23,6 +24,7 @@ contextBridge.exposeInMainWorld("cleanmark", {
   setDirty: (dirty) => ipcRenderer.send("window:set-dirty", Boolean(dirty)),
   setTitle: (title) => ipcRenderer.send("window:set-title", title),
   finishClose: (saved) => ipcRenderer.send("window:finish-close", Boolean(saved)),
+  reload: () => ipcRenderer.send("window:reload"),
   pathForDroppedFile: (file) => webUtils.getPathForFile(file),
   onCommand: (callback) => subscribe("app:command", callback),
   onSaveBeforeClose: (callback) => subscribe("app:save-before-close", callback),

@@ -17,15 +17,28 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: 校验标签版本
+        shell: powershell
+        run: |
+          $version = (Get-Content package.json -Raw -Encoding UTF8 | ConvertFrom-Json).version
+          $expectedTag = "v$version"
+          $actualTag = "${{ github.ref_name }}"
+          if ($actualTag -ne $expectedTag) {
+            throw "Git tag '$actualTag' does not match package.json version '$expectedTag'."
+          }
       - run: npm run check
       - run: npm run smoke
       - run: npm run test:e2e
+      - run: npm audit
       - run: npm run installer:win
       - name: 准备 GitHub Release 文件
         shell: powershell
         run: |
-          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          $source = Get-Item "release/installer/*.exe"
+          $version = (Get-Content package.json -Raw -Encoding UTF8 | ConvertFrom-Json).version
+          $source = Get-ChildItem "release/installer" -Filter "*.exe" | Where-Object { $_.Name -like "*$version*" } | Select-Object -First 1
+          if (!$source) {
+            throw "No installer matching version $version was found."
+          }
           $releaseName = "CleanMark-$version-Setup.exe"
           Copy-Item -LiteralPath $source.FullName -Destination "release/installer/$releaseName"
           Get-FileHash "release/installer/$releaseName" -Algorithm SHA256 | ForEach-Object { "$($_.Hash)  $releaseName" } | Set-Content -Encoding ascii "release/installer/SHA256SUMS.txt"

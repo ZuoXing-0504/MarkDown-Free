@@ -32,7 +32,7 @@ npm run smoke
 npm run test:e2e
 ```
 
-端到端测试会真实创建和修改 Markdown 文件，覆盖打开、覆盖保存、另存为、自动保存、保存竞态、撤销/重做、外部冲突、UTF-16/GB18030、CRLF、相对图片、远程图片隐私、HTML 清洗和语法高亮。
+端到端测试会真实创建和修改 Markdown 文件，覆盖打开、覆盖保存、另存为、自动保存、保存竞态、恢复草稿、重新加载保护、撤销/重做、外部冲突、UTF-16/GB18030、CRLF、相对图片、远程图片隐私、HTML 清洗和语法高亮。
 
 ## Windows 打包
 
@@ -48,9 +48,9 @@ npm run package:win
 npm run installer:win
 ```
 
-本机输出文件为 `release/installer/清墨-0.3.1-安装程序.exe`；GitHub Release 为避免平台自动剥离中文文件名，使用 `CleanMark-0.3.1-Setup.exe`。安装器仅安装到当前用户的 `%LOCALAPPDATA%\Programs\清墨`，不需要管理员权限，可选创建桌面快捷方式和加入 `.md`、`.markdown` 的“打开方式”列表，不替换现有默认程序。
+本机输出文件为 `release/installer/清墨-0.3.2-安装程序.exe`；GitHub Release 为避免平台自动剥离中文文件名，使用 `CleanMark-0.3.2-Setup.exe`。安装器仅安装到当前用户的 `%LOCALAPPDATA%\Programs\清墨`，不需要管理员权限，可选创建桌面快捷方式和加入 `.md`、`.markdown` 的“打开方式”列表，不替换现有默认程序。
 
-生成文件不进入 Git 历史；`v*` 标签会由 GitHub Actions 构建安装器、生成 SHA-256 并发布到 GitHub Release。
+生成文件不进入 Git 历史；`v*` 标签会由 GitHub Actions 校验标签版本、构建安装器、生成 SHA-256 并发布到 GitHub Release。
 
 > 当前安装器没有商业代码签名，Windows 可能显示“未知发布者”或 SmartScreen 提示。请仅从本仓库 Release 下载并核对 SHA-256。代码签名需要开发者另行提供有效证书。
 
@@ -70,7 +70,7 @@ npm ci
 - `tests/fixtures`：真实 Markdown 流程测试数据
 - `scripts`：构建、图标、打包和测试脚本
 - `installer/cleanmark.iss`：仅当前用户的中文 Inno Setup 安装器
-- `RELEASE_CHECKLIST.md`：0.3.0 发布状态和外部阻塞项
+- `RELEASE_CHECKLIST.md`：当前版本发布状态和外部阻塞项
 
 ## 开源许可
 

@@ -210,11 +210,10 @@ function resetDocumentState() {
 async function confirmDiscard() {
   if (!state.dirty) return true;
   if (!window.confirm("放弃当前文档中尚未保存的更改吗？")) return false;
-  await api.clearRecovery();
   return true;
 }
 
-function loadDocument(result) {
+function loadDocument(result, { clearRecovery = false } = {}) {
   resetDocumentState();
   state.filePath = result.filePath;
   elements.editor.value = result.content;
@@ -226,7 +225,7 @@ function loadDocument(result) {
   const encodingNames = { utf8: "UTF-8", utf16le: "UTF-16 LE", utf16be: "UTF-16 BE", gb18030: "GB18030" };
   elements.encodingStatus.textContent = `${encodingNames[state.encoding] || state.encoding} · ${state.eol.toUpperCase()}`;
   setDirty(false);
-  api.clearRecovery().catch(reportError);
+  if (clearRecovery) api.clearRecovery().catch(reportError);
   updateTitle();
   renderMarkdown();
   updateCursorStatus();
@@ -236,6 +235,7 @@ function loadDocument(result) {
 }
 
 async function newDocument() {
+  const clearRecovery = state.dirty;
   if (!(await confirmDiscard())) return;
   resetDocumentState();
   state.filePath = null;
@@ -247,7 +247,7 @@ async function newDocument() {
   state.eol = "lf";
   elements.encodingStatus.textContent = "UTF-8 · LF";
   setDirty(false);
-  api.clearRecovery().catch(reportError);
+  if (clearRecovery) api.clearRecovery().catch(reportError);
   updateTitle();
   renderMarkdown();
   highlightActiveFile();
@@ -255,28 +255,28 @@ async function newDocument() {
   setStatus("已新建文档");
 }
 
-async function openFile() {
+async function replaceDocumentAfterDiscard(readDocument) {
+  const clearRecovery = state.dirty;
   if (!(await confirmDiscard())) return;
   try {
-    const result = await api.openFile();
-    if (result) loadDocument(result);
+    const result = await readDocument();
+    if (result) loadDocument(result, { clearRecovery });
   } catch (error) {
     reportError(error);
   }
 }
 
+async function openFile() {
+  await replaceDocumentAfterDiscard(() => api.openFile());
+}
+
 async function openPath(filePath) {
-  if (filePath === state.filePath || !(await confirmDiscard())) return;
-  try {
-    loadDocument(await api.readFile(filePath));
-  } catch (error) {
-    reportError(error);
-  }
+  if (filePath === state.filePath) return;
+  await replaceDocumentAfterDiscard(() => api.readFile(filePath));
 }
 
 async function saveDocument(saveAs = false) {
   const documentToken = state.documentToken;
-  const revision = state.revision;
   const content = elements.editor.value;
   const originalPath = state.filePath;
   try {
@@ -301,7 +301,7 @@ async function saveDocument(saveAs = false) {
       result = await api.saveFile(saveAs ? null : originalPath, content, { ...options, force: true });
       if (!result) return false;
     }
-    if (documentToken !== state.documentToken) return true;
+    if (documentToken !== state.documentToken) return false;
     state.filePath = result.filePath;
     state.savedContent = content;
     state.fingerprint = result.fingerprint;
@@ -312,8 +312,8 @@ async function saveDocument(saveAs = false) {
     if (!state.dirty) await api.clearRecovery();
     updateTitle();
     highlightActiveFile();
-    setStatus(`已保存 ${baseName(result.filePath)}`);
-    return true;
+    setStatus(state.dirty ? `已保存 ${baseName(result.filePath)}，仍有未保存更改` : `已保存 ${baseName(result.filePath)}`);
+    return !state.dirty;
   } catch (error) {
     reportError(error);
     return false;
@@ -501,8 +501,20 @@ function handleCommand(command) {
     "view-editor": () => setView("editor"),
     "view-split": () => setView("split"),
     "view-preview": () => setView("preview"),
+    reload: reloadWindow,
   };
   actions[command]?.();
+}
+
+async function reloadWindow() {
+  const clearRecovery = state.dirty;
+  if (!(await confirmDiscard())) return;
+  try {
+    if (clearRecovery) await api.clearRecovery();
+    api.reload();
+  } catch (error) {
+    reportError(error);
+  }
 }
 
 elements.editor.addEventListener("input", handleEditorInput);
@@ -575,13 +587,11 @@ document.addEventListener("dragover", (event) => event.preventDefault());
 document.addEventListener("drop", async (event) => {
   event.preventDefault();
   const file = event.dataTransfer.files[0];
-  if (!file || !(await confirmDiscard())) return;
-  try {
+  if (!file) return;
+  await replaceDocumentAfterDiscard(() => {
     const filePath = api.pathForDroppedFile(file);
-    if (filePath) loadDocument(await api.readFile(filePath));
-  } catch (error) {
-    reportError(error);
-  }
+    return filePath ? api.readFile(filePath) : null;
+  });
 });
 
 api.onCommand(handleCommand);
@@ -600,6 +610,11 @@ api.onE2eRun(async ({ directory }) => {
   const assert = (name, condition, detail) => {
     result.assertions[name] = Boolean(condition);
     if (!condition) result.errors.push(`${name}: ${detail}`);
+  };
+  const cancelPendingRecovery = () => {
+    if (!state.recoveryTimer) return;
+    window.clearTimeout(state.recoveryTimer);
+    state.recoveryTimer = null;
   };
 
   try {
@@ -663,7 +678,8 @@ api.onE2eRun(async ({ directory }) => {
     const delayedSave = saveDocument(false);
     elements.editor.value += "\n保存期间继续输入";
     handleEditorInput();
-    await delayedSave;
+    const delayedSaveResult = await delayedSave;
+    assert("保存竞态不放行关闭", delayedSaveResult === false, "保存旧快照不应被视为当前文档已保存");
     assert("保存竞态保留脏状态", state.dirty, "保存期间输入被错误标记为已保存");
     await saveDocument(false);
     const raceSaved = await api.readFile(racePath);
@@ -705,8 +721,36 @@ api.onE2eRun(async ({ directory }) => {
     await api.writeRecovery({ filePath: null, content: "# 未命名恢复草稿", encoding: "utf8", bom: false, eol: "lf" });
     const recoveredDraft = await api.getRecovery();
     assert("未命名草稿恢复读取", recoveredDraft?.content === "# 未命名恢复草稿" && recoveredDraft.filePath === null, JSON.stringify(recoveredDraft));
+
+    const originalConfirm = window.confirm;
+    try {
+      window.confirm = () => true;
+      elements.editor.value = "# 放弃后打开失败仍需保留恢复草稿";
+      handleEditorInput();
+      cancelPendingRecovery();
+      await replaceDocumentAfterDiscard(async () => {
+        throw new Error("模拟打开失败");
+      });
+      const preservedDraft = await api.getRecovery();
+      assert("打开失败不清恢复草稿", preservedDraft?.content === "# 未命名恢复草稿", JSON.stringify(preservedDraft));
+    } finally {
+      window.confirm = originalConfirm;
+    }
+
+    try {
+      window.confirm = () => false;
+      elements.editor.value = "# 重新加载前未保存";
+      handleEditorInput();
+      cancelPendingRecovery();
+      await reloadWindow();
+      assert("取消重新加载保留文档", elements.editor.value === "# 重新加载前未保存" && state.dirty, "取消后文档被重新加载或清脏");
+    } finally {
+      window.confirm = originalConfirm;
+    }
+
     await api.clearRecovery();
     assert("恢复草稿明确清除", (await api.getRecovery()) === null, "恢复草稿仍然存在");
+    loadDocument(await api.readFile(gb18030Path));
 
     elements.editor.focus();
     elements.editor.setSelectionRange(elements.editor.value.length, elements.editor.value.length);
@@ -779,12 +823,30 @@ async function restoreRecovery() {
   }
 }
 
-elements.editor.value = welcomeDocument;
-elements.autosave.checked = state.autosave;
-setView(state.view);
-applyTheme();
-updateTitle();
-renderMarkdown();
-updateCursorStatus();
-setDirty(false);
-restoreRecovery();
+async function loadInitialDocument() {
+  const initialPath = await api.getInitialOpenPath();
+  if (!initialPath) return false;
+  try {
+    loadDocument(await api.readFile(initialPath));
+    return true;
+  } catch (error) {
+    reportError(error);
+    return false;
+  }
+}
+
+async function initialize() {
+  elements.editor.value = welcomeDocument;
+  elements.autosave.checked = state.autosave;
+  setView(state.view);
+  applyTheme();
+  updateTitle();
+  renderMarkdown();
+  updateCursorStatus();
+  setDirty(false);
+
+  if (await loadInitialDocument()) return;
+  await restoreRecovery();
+}
+
+initialize().catch(reportError);
