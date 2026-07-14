@@ -18,13 +18,16 @@ if (stderr) process.stderr.write(stderr);
 
 const localInstallerName = `清墨-${packageJson.version}-安装程序.exe`;
 const releaseInstallerName = `CleanMark-${packageJson.version}-Setup.exe`;
+const chineseReleaseInstallerName = `QingMo-${packageJson.version}-Setup.exe`;
 const localInstaller = new URL(`../release/installer/${localInstallerName}`, import.meta.url);
 const releaseInstaller = new URL(`../release/installer/${releaseInstallerName}`, import.meta.url);
+const chineseReleaseInstaller = new URL(`../release/installer/${chineseReleaseInstallerName}`, import.meta.url);
 await copyFile(localInstaller, releaseInstaller);
+await copyFile(localInstaller, chineseReleaseInstaller);
 const digest = createHash("sha256").update(await readFile(releaseInstaller)).digest("hex").toUpperCase();
 await writeFile(
   new URL("../release/installer/SHA256SUMS.txt", import.meta.url),
-  `${digest}  ${releaseInstallerName}\n${digest}  ${localInstallerName}\n`,
+  `${digest}  ${releaseInstallerName}\n${digest}  ${chineseReleaseInstallerName}\n`,
   "utf8",
 );
-console.log(`Prepared ${releaseInstallerName} and SHA256SUMS.txt (${digest}).`);
+console.log(`Prepared ${releaseInstallerName}, ${chineseReleaseInstallerName}, and SHA256SUMS.txt (${digest}).`);

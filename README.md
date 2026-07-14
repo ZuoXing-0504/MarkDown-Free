@@ -48,7 +48,7 @@ npm run package:win
 npm run installer:win
 ```
 
-本机和 GitHub Release 同时提供 `清墨-0.3.3-安装程序.exe` 与 `CleanMark-0.3.3-Setup.exe`，两个文件内容相同，分别方便中文用户和英文环境下载。安装器仅安装到当前用户的 `%LOCALAPPDATA%\Programs\清墨`，不需要管理员权限，可选创建桌面快捷方式和加入 `.md`、`.markdown` 的“打开方式”列表，不替换现有默认程序。正常卸载时可选择同时清除本地设置和恢复草稿。
+本机输出中文文件名 `清墨-0.3.3-安装程序.exe`。由于 GitHub 会清理 Release 资产名中的中文字符，GitHub Release 同时提供 `QingMo-0.3.3-Setup.exe` 与 `CleanMark-0.3.3-Setup.exe`；两个文件内容相同，分别使用清墨拼音和英文产品名。安装器仅安装到当前用户的 `%LOCALAPPDATA%\Programs\清墨`，不需要管理员权限，可选创建桌面快捷方式和加入 `.md`、`.markdown` 的“打开方式”列表，不替换现有默认程序。正常卸载时可选择同时清除本地设置和恢复草稿。
 
 生成文件不进入 Git 历史；本地构建会同时生成中文安装器、英文发布资产和 `SHA256SUMS.txt`。`v*` 标签会由 GitHub Actions 校验标签版本、重新安装测试并发布到 GitHub Release。
 
