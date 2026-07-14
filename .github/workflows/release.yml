@@ -36,25 +36,7 @@ jobs:
       - name: 验证安装、已安装应用和卸载
         run: node scripts/test-installed.mjs
       - name: 准备 GitHub Release 文件
-        shell: powershell
-        run: |
-          $version = (Get-Content package.json -Raw -Encoding UTF8 | ConvertFrom-Json).version
-          $releaseName = "CleanMark-$version-Setup.exe"
-          $releasePath = "release/installer/$releaseName"
-          $chineseName = "清墨-$version-安装程序.exe"
-          $chinesePath = "release/installer/$chineseName"
-          if (!(Test-Path -LiteralPath $releasePath)) { throw "Missing release asset $releaseName." }
-          if (!(Test-Path -LiteralPath $chinesePath)) { throw "Missing release asset $chineseName." }
-          $releaseHash = (Get-FileHash $releasePath -Algorithm SHA256).Hash
-          $chineseHash = (Get-FileHash $chinesePath -Algorithm SHA256).Hash
-          if ($releaseHash -ne $chineseHash) { throw "Chinese and English installer assets differ." }
-          $checksumLines = @(
-            "$releaseHash  $releaseName"
-            "$chineseHash  $chineseName"
-          )
-          $checksumPath = Join-Path (Resolve-Path "release/installer").Path "SHA256SUMS.txt"
-          $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-          [System.IO.File]::WriteAllLines($checksumPath, $checksumLines, $utf8NoBom)
+        run: node scripts/verify-release-assets.mjs
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cleanmark-windows-installer
