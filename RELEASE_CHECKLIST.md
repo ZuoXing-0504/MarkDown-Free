@@ -43,7 +43,7 @@
 - [x] Windows CI、完整依赖审计、标签版本校验发布工作流、Dependabot
 - [x] Bug/功能 Issue 模板、PR 模板、贡献与安全说明
 - [x] 源码推送至 GitHub
-- [ ] 推送 `v0.3.3` 标签触发 GitHub Actions 自动创建 Release
+- [x] 推送 `v0.3.3` 标签并由 GitHub Actions 自动创建 Release
 - [x] 仓库简介和项目主页信息
 - [ ] `main` 分支保护（个人仓库暂不启用，避免阻断单人直接发布）
 - [ ] 自动更新（待签名发布链稳定后实现）
