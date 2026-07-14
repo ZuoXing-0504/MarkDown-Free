@@ -1,7 +1,7 @@
 #define AppName "清墨"
 #define AppEnglishName "CleanMark"
 #ifndef AppVersion
-  #define AppVersion "0.3.2"
+  #define AppVersion "0.3.3"
 #endif
 #define AppPublisher "ZuoXing-0504"
 #define AppURL "https://github.com/ZuoXing-0504/MarkDown-Free"
@@ -71,4 +71,18 @@ Filename: "{app}\{#AppExeName}"; Description: "启动 {#AppName}"; Flags: nowait
 function InitializeSetup(): Boolean;
 begin
   Result := True;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if (CurUninstallStep = usPostUninstall) and (not UninstallSilent) then
+  begin
+    if MsgBox('是否同时删除清墨的本地设置和崩溃恢复草稿？' + #13#10 +
+      '选择“是”会永久删除用户数据；选择“否”可在重新安装后继续使用。',
+      mbConfirmation, MB_YESNO) = IDYES then
+    begin
+      DelTree(ExpandConstant('{userappdata}\清墨'), True, True, True);
+      DelTree(ExpandConstant('{userappdata}\cleanmark'), True, True, True);
+    end;
+  end;
 end;

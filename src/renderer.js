@@ -24,6 +24,7 @@ const elements = {
 
 const state = {
   filePath: null,
+  fileUrl: null,
   dirty: false,
   folder: null,
   view: localStorage.getItem("cleanmark.view") || "split",
@@ -36,10 +37,13 @@ const state = {
   savedContent: "",
   fingerprint: null,
   encoding: "utf8",
+  encodingUncertain: false,
+  encodingConfirmed: true,
   bom: false,
   eol: "lf",
   recoveryTimer: null,
 };
+let saveQueue = Promise.resolve();
 
 const welcomeDocument = `# 欢迎使用清墨
 
@@ -113,22 +117,38 @@ function renderMarkdown() {
   const sanitized = DOMPurify.sanitize(rendered, {
     USE_PROFILES: { html: true },
     ADD_ATTR: ["target", "rel"],
+    FORBID_ATTR: ["style", "srcset", "poster", "background"],
+    FORBID_TAGS: ["style", "link", "source", "picture", "video", "audio"],
   });
   const template = document.createElement("template");
   template.innerHTML = sanitized;
   template.content.querySelectorAll('img[src]').forEach((image) => {
     const source = image.getAttribute("src");
-    if (!/^https?:\/\//i.test(source || "")) return;
-    const button = document.createElement("button");
-    button.className = "remote-image-button";
-    button.type = "button";
-    button.dataset.remoteImage = source;
-    button.textContent = "远程图片已阻止，点击后加载";
-    image.replaceWith(button);
+    if (!source) return;
+    const remoteSource = /^https?:\/\//i.test(source) ? source : source.startsWith("//") ? `https:${source}` : null;
+    if (remoteSource) {
+      const button = document.createElement("button");
+      button.className = "remote-image-button";
+      button.type = "button";
+      button.dataset.remoteImage = remoteSource;
+      button.dataset.remoteAlt = image.getAttribute("alt") || "远程图片";
+      button.textContent = "远程图片已阻止，点击后安全加载";
+      image.replaceWith(button);
+      return;
+    }
+    if (/^data:image\/(?:png|jpeg|gif|webp|avif);/i.test(source)) return;
+    if (/^(?:[a-z][a-z0-9+.-]*:|#|\\\\|\/)/i.test(source)) {
+      const blocked = document.createElement("span");
+      blocked.className = "blocked-image-label";
+      blocked.textContent = "已阻止不安全的图片地址";
+      image.replaceWith(blocked);
+      return;
+    }
+    if (state.fileUrl) image.setAttribute("src", new URL(source.replaceAll("\\", "/"), state.fileUrl).href);
+    else image.removeAttribute("src");
   });
   elements.preview.replaceChildren(template.content);
   addHeadingAnchors();
-  resolvePreviewImages();
   elements.preview.querySelectorAll("pre code").forEach((block) => hljs.highlightElement(block));
   elements.wordCount.textContent = `${countWords(markdown)} 字词`;
   state.renderTimer = null;
@@ -146,16 +166,6 @@ function addHeadingAnchors() {
     const count = usedIds.get(baseId) || 0;
     usedIds.set(baseId, count + 1);
     heading.id = count ? `${baseId}-${count}` : baseId;
-  });
-}
-
-function resolvePreviewImages() {
-  if (!state.filePath) return;
-  const documentUrl = new URL(`file:///${state.filePath.replaceAll("\\", "/")}`);
-  elements.preview.querySelectorAll("img[src]").forEach((image) => {
-    const source = image.getAttribute("src");
-    if (!source || /^(?:[a-z]+:|#|\/\/)/i.test(source)) return;
-    image.src = new URL(source, documentUrl).href;
   });
 }
 
@@ -181,8 +191,10 @@ function scheduleRecovery() {
     if (documentToken !== state.documentToken || !state.dirty) return;
     api.writeRecovery({
       filePath: state.filePath,
+      fileUrl: state.fileUrl,
       content: elements.editor.value,
       encoding: state.encoding,
+      encodingUncertain: state.encodingUncertain,
       bom: state.bom,
       eol: state.eol,
       fingerprint: state.fingerprint,
@@ -213,19 +225,21 @@ async function confirmDiscard() {
   return true;
 }
 
-function loadDocument(result, { clearRecovery = false } = {}) {
+function loadDocument(result) {
   resetDocumentState();
   state.filePath = result.filePath;
+  state.fileUrl = result.fileUrl || null;
   elements.editor.value = result.content;
   state.savedContent = result.content;
   state.fingerprint = result.fingerprint || null;
   state.encoding = result.encoding || "utf8";
+  state.encodingUncertain = Boolean(result.encodingUncertain);
+  state.encodingConfirmed = !state.encodingUncertain;
   state.bom = Boolean(result.bom);
   state.eol = result.eol || "lf";
   const encodingNames = { utf8: "UTF-8", utf16le: "UTF-16 LE", utf16be: "UTF-16 BE", gb18030: "GB18030" };
-  elements.encodingStatus.textContent = `${encodingNames[state.encoding] || state.encoding} · ${state.eol.toUpperCase()}`;
+  elements.encodingStatus.textContent = `${encodingNames[state.encoding] || state.encoding}${state.encodingUncertain ? "（推测）" : ""} · ${state.eol.toUpperCase()}`;
   setDirty(false);
-  if (clearRecovery) api.clearRecovery().catch(reportError);
   updateTitle();
   renderMarkdown();
   updateCursorStatus();
@@ -239,15 +253,18 @@ async function newDocument() {
   if (!(await confirmDiscard())) return;
   resetDocumentState();
   state.filePath = null;
+  state.fileUrl = null;
   elements.editor.value = "";
   state.savedContent = "";
   state.fingerprint = null;
   state.encoding = "utf8";
+  state.encodingUncertain = false;
+  state.encodingConfirmed = true;
   state.bom = false;
   state.eol = "lf";
   elements.encodingStatus.textContent = "UTF-8 · LF";
   setDirty(false);
-  if (clearRecovery) api.clearRecovery().catch(reportError);
+  if (clearRecovery) await api.clearRecovery();
   updateTitle();
   renderMarkdown();
   highlightActiveFile();
@@ -260,7 +277,10 @@ async function replaceDocumentAfterDiscard(readDocument) {
   if (!(await confirmDiscard())) return;
   try {
     const result = await readDocument();
-    if (result) loadDocument(result, { clearRecovery });
+    if (result) {
+      loadDocument(result);
+      if (clearRecovery) await api.clearRecovery();
+    }
   } catch (error) {
     reportError(error);
   }
@@ -275,20 +295,44 @@ async function openPath(filePath) {
   await replaceDocumentAfterDiscard(() => api.readFile(filePath));
 }
 
-async function saveDocument(saveAs = false) {
-  const documentToken = state.documentToken;
-  const content = elements.editor.value;
-  const originalPath = state.filePath;
+function saveDocument(saveAs = false) {
+  const request = {
+    saveAs,
+    documentToken: state.documentToken,
+    content: elements.editor.value,
+    originalPath: state.filePath,
+    encoding: state.encoding,
+    encodingUncertain: state.encodingUncertain,
+    bom: state.bom,
+    eol: state.eol,
+  };
+  const result = saveQueue.then(() => performSaveDocument(request));
+  saveQueue = result.then(() => undefined, () => undefined);
+  return result;
+}
+
+async function performSaveDocument(request) {
+  if (request.documentToken !== state.documentToken) return false;
+  if (request.encodingUncertain && !state.encodingConfirmed) {
+    const confirmed = window.confirm(
+      "当前文件编码只能推测为 GB18030。若原文件实际使用其他编码，保存可能改变内容。是否继续保存？",
+    );
+    if (!confirmed) {
+      setStatus("已取消保存；请先确认文件编码。", 4500);
+      return false;
+    }
+    state.encodingConfirmed = true;
+  }
   try {
     const options = {
-      baseFingerprint: saveAs ? null : state.fingerprint,
-      encoding: saveAs ? "utf8" : state.encoding,
-      bom: saveAs ? false : state.bom,
-      eol: saveAs ? "lf" : state.eol,
+      encoding: request.saveAs ? "utf8" : request.encoding,
+      bom: request.saveAs ? false : request.bom,
+      eol: request.saveAs ? "lf" : request.eol,
     };
-    let result = await api.saveFile(saveAs ? null : originalPath, content, options);
+    if (!request.saveAs && request.originalPath) options.expectedFingerprint = state.fingerprint;
+    let result = await api.saveFile(request.saveAs ? null : request.originalPath, request.content, options);
     if (!result) return false;
-    if (result.conflict) {
+    while (result.conflict) {
       const overwrite = window.confirm(
         result.missing
           ? "该文件已被其他程序删除。是否重新创建并覆盖保存？"
@@ -298,14 +342,20 @@ async function saveDocument(saveAs = false) {
         setStatus("已取消保存，外部更改未被覆盖。", 4500);
         return false;
       }
-      result = await api.saveFile(saveAs ? null : originalPath, content, { ...options, force: true });
+      result = await api.saveFile(request.saveAs ? null : request.originalPath, request.content, {
+        ...options,
+        expectedFingerprint: result.currentFingerprint ?? null,
+      });
       if (!result) return false;
     }
-    if (documentToken !== state.documentToken) return false;
+    if (request.documentToken !== state.documentToken) return false;
     state.filePath = result.filePath;
-    state.savedContent = content;
+    state.fileUrl = result.fileUrl || null;
+    state.savedContent = request.content;
     state.fingerprint = result.fingerprint;
     state.encoding = result.encoding;
+    state.encodingUncertain = false;
+    state.encodingConfirmed = true;
     state.bom = result.bom;
     state.eol = result.eol;
     setDirty(elements.editor.value !== state.savedContent);
@@ -511,7 +561,7 @@ async function reloadWindow() {
   if (!(await confirmDiscard())) return;
   try {
     if (clearRecovery) await api.clearRecovery();
-    api.reload();
+    api.reload(state.filePath);
   } catch (error) {
     reportError(error);
   }
@@ -537,10 +587,23 @@ elements.editor.addEventListener("keydown", (event) => {
 elements.preview.addEventListener("click", (event) => {
   const remoteImageButton = event.target.closest("[data-remote-image]");
   if (remoteImageButton) {
-    const image = document.createElement("img");
-    image.src = remoteImageButton.dataset.remoteImage;
-    image.alt = "远程图片";
-    remoteImageButton.replaceWith(image);
+    remoteImageButton.disabled = true;
+    remoteImageButton.textContent = "正在安全加载远程图片…";
+    api.loadRemoteImage(remoteImageButton.dataset.remoteImage)
+      .then(({ dataUrl }) => {
+        if (!/^data:image\/(?:png|jpeg|gif|webp|avif);base64,/i.test(dataUrl || "")) {
+          throw new Error("远程图片响应无效。");
+        }
+        const image = document.createElement("img");
+        image.src = dataUrl;
+        image.alt = remoteImageButton.dataset.remoteAlt || "远程图片";
+        remoteImageButton.replaceWith(image);
+      })
+      .catch((error) => {
+        remoteImageButton.disabled = false;
+        remoteImageButton.textContent = "远程图片加载失败，点击重试";
+        reportError(error);
+      });
     return;
   }
   const link = event.target.closest("a[href]");
@@ -606,6 +669,7 @@ api.onE2eRun(async ({ directory }) => {
   const conflictPath = `${directory}\\08-外部冲突.md`;
   const utf16Path = `${directory}\\06-UTF16LE-CRLF.md`;
   const gb18030Path = `${directory}\\07-GB18030.md`;
+  const binaryPath = `${directory}\\09-二进制.bin`;
 
   const assert = (name, condition, detail) => {
     result.assertions[name] = Boolean(condition);
@@ -637,6 +701,24 @@ api.onE2eRun(async ({ directory }) => {
     elements.editor.value += "\n\n![远程](https://example.invalid/tracker.png)";
     renderMarkdown();
     assert("远程图片默认阻止", !elements.preview.querySelector('img[src^="https:"]') && Boolean(elements.preview.querySelector("[data-remote-image]")), "远程图片被静默加载");
+    elements.editor.value = '<img src="data:image/png;base64,AA==" srcset="https://example.invalid/tracker.png 2x" style="background-image:url(https://example.invalid/css.png)"><picture><source srcset="https://example.invalid/source.png"><img src="//example.invalid/unc.png"></picture>';
+    renderMarkdown();
+    assert("远程资源旁路清理", !elements.preview.querySelector("[srcset], [style], source, picture") && elements.preview.querySelectorAll("[data-remote-image]").length === 1, elements.preview.innerHTML);
+    let privateImageBlocked = true;
+    for (const privateUrl of [
+      "https://127.0.0.1/private.png",
+      "https://192.0.2.1/reserved.png",
+      "https://[::ffff:127.0.0.1]/mapped-private.png",
+      "https://[2001:db8::1]/reserved.png",
+    ]) {
+      try {
+        await api.loadRemoteImage(privateUrl);
+        privateImageBlocked = false;
+      } catch {
+        // 预期：本机、私网、文档示例和 IPv4 映射 IPv6 地址均被拒绝。
+      }
+    }
+    assert("远程图片私网阻止", privateImageBlocked, "私网地址未被阻止");
     loadDocument(await api.readFile(fixturePath));
 
     elements.editor.value += "\n\n## 编辑后保存\n\n这是实际写入磁盘的中文内容。";
@@ -708,12 +790,21 @@ api.onE2eRun(async ({ directory }) => {
     assert("UTF-16 与 CRLF 保留", utf16Reloaded.encoding === "utf16le" && utf16Reloaded.bom && utf16Reloaded.eol === "crlf" && utf16Reloaded.content.includes("新增中文。"), JSON.stringify(utf16Reloaded));
 
     loadDocument(await api.readFile(gb18030Path));
-    assert("GB18030 识别", state.encoding === "gb18030" && state.eol === "crlf", `${state.encoding}/${state.eol}`);
+    assert("GB18030 识别", state.encoding === "gb18030" && state.encodingUncertain && state.eol === "crlf", `${state.encoding}/${state.encodingUncertain}/${state.eol}`);
+    state.encodingConfirmed = true;
     elements.editor.value += "\n新增内容。";
     handleEditorInput();
     await saveDocument(false);
     const gbReloaded = await api.readFile(gb18030Path);
     assert("GB18030 与 CRLF 保留", gbReloaded.encoding === "gb18030" && gbReloaded.eol === "crlf" && gbReloaded.content.includes("新增内容。"), JSON.stringify(gbReloaded));
+
+    let binaryBlocked = false;
+    try {
+      await api.readFile(binaryPath);
+    } catch {
+      binaryBlocked = true;
+    }
+    assert("二进制文件阻止", binaryBlocked, "二进制文件被当作文本打开");
 
     const directoryEntries = await api.listDirectoryForTest(directory);
     assert("原子保存临时文件清理", !directoryEntries.some((name) => name.endsWith(".tmp")), directoryEntries.join(", "));
@@ -722,7 +813,26 @@ api.onE2eRun(async ({ directory }) => {
     const recoveredDraft = await api.getRecovery();
     assert("未命名草稿恢复读取", recoveredDraft?.content === "# 未命名恢复草稿" && recoveredDraft.filePath === null, JSON.stringify(recoveredDraft));
 
+    const startupFile = await api.readFile(fixturePath);
     const originalConfirm = window.confirm;
+    try {
+      window.confirm = () => true;
+      await chooseStartupDocument(startupFile, recoveredDraft);
+      assert("启动时选择恢复草稿", elements.editor.value === "# 未命名恢复草稿" && state.dirty, elements.editor.value);
+      await api.writeRecovery({ filePath: null, content: "# 再次恢复草稿", encoding: "utf8", bom: false, eol: "lf" });
+      window.confirm = () => false;
+      await chooseStartupDocument(startupFile, await api.getRecovery());
+      assert("启动时选择指定文件", state.filePath === fixturePath && !state.dirty && (await api.getRecovery()) === null, state.filePath);
+    } finally {
+      window.confirm = originalConfirm;
+    }
+
+    const queuedWrite = api.writeRecovery({ filePath: null, content: "# 即将清除的草稿", encoding: "utf8", bom: false, eol: "lf" });
+    const queuedClear = api.clearRecovery();
+    await Promise.all([queuedWrite, queuedClear]);
+    assert("恢复写入清除串行", (await api.getRecovery()) === null, "清除后草稿被旧写入重新创建");
+
+    await api.writeRecovery({ filePath: null, content: "# 打开失败前的恢复草稿", encoding: "utf8", bom: false, eol: "lf" });
     try {
       window.confirm = () => true;
       elements.editor.value = "# 放弃后打开失败仍需保留恢复草稿";
@@ -732,7 +842,7 @@ api.onE2eRun(async ({ directory }) => {
         throw new Error("模拟打开失败");
       });
       const preservedDraft = await api.getRecovery();
-      assert("打开失败不清恢复草稿", preservedDraft?.content === "# 未命名恢复草稿", JSON.stringify(preservedDraft));
+      assert("打开失败不清恢复草稿", preservedDraft?.content === "# 打开失败前的恢复草稿", JSON.stringify(preservedDraft));
     } finally {
       window.confirm = originalConfirm;
     }
@@ -797,42 +907,60 @@ api.onE2eRun(async ({ directory }) => {
   api.reportE2e(result);
 });
 
-async function restoreRecovery() {
-  try {
-    const draft = await api.getRecovery();
-    if (!draft) return;
-    if (!window.confirm(`发现 ${draft.savedAt ? new Date(draft.savedAt).toLocaleString() : "上次"} 的未保存草稿，是否恢复？`)) {
-      await api.clearRecovery();
-      return;
-    }
-    resetDocumentState();
-    state.filePath = draft.filePath || null;
-    state.encoding = draft.encoding || "utf8";
-    state.bom = Boolean(draft.bom);
-    state.eol = draft.eol || "lf";
-    state.fingerprint = draft.fingerprint || null;
-    state.savedContent = "";
-    elements.editor.value = draft.content;
-    updateTitle();
-    renderMarkdown();
-    updateCursorStatus();
-    setDirty(true);
-    setStatus("已恢复未保存草稿", 4500);
-  } catch (error) {
-    reportError(error);
-  }
+function applyRecoveryDraft(draft) {
+  resetDocumentState();
+  state.filePath = draft.filePath || null;
+  state.fileUrl = draft.fileUrl || null;
+  state.encoding = draft.encoding || "utf8";
+  state.encodingUncertain = Boolean(draft.encodingUncertain);
+  state.encodingConfirmed = !state.encodingUncertain;
+  state.bom = Boolean(draft.bom);
+  state.eol = draft.eol || "lf";
+  state.fingerprint = draft.fingerprint || null;
+  state.savedContent = "";
+  elements.editor.value = draft.content;
+  updateTitle();
+  renderMarkdown();
+  updateCursorStatus();
+  setDirty(true);
+  setStatus("已恢复未保存草稿", 4500);
 }
 
-async function loadInitialDocument() {
-  const initialPath = await api.getInitialOpenPath();
-  if (!initialPath) return false;
+async function restoreRecovery(draft = null) {
   try {
-    loadDocument(await api.readFile(initialPath));
+    const recoveryDraft = draft || await api.getRecovery();
+    if (!recoveryDraft) return false;
+    if (!window.confirm(`发现 ${recoveryDraft.savedAt ? new Date(recoveryDraft.savedAt).toLocaleString() : "上次"} 的未保存草稿，是否恢复？`)) {
+      await api.clearRecovery();
+      return false;
+    }
+    applyRecoveryDraft(recoveryDraft);
     return true;
   } catch (error) {
     reportError(error);
     return false;
   }
+}
+
+async function chooseStartupDocument(initialResult, draft) {
+  if (initialResult && draft) {
+    const recover = window.confirm(
+      `发现 ${draft.savedAt ? new Date(draft.savedAt).toLocaleString() : "上次"} 的未保存草稿。\n\n确定：恢复草稿\n取消：打开 ${baseName(initialResult.filePath)} 并放弃草稿`,
+    );
+    if (recover) {
+      applyRecoveryDraft(draft);
+      return "recovery";
+    }
+    loadDocument(initialResult);
+    await api.clearRecovery();
+    return "initial";
+  }
+  if (initialResult) {
+    loadDocument(initialResult);
+    return "initial";
+  }
+  if (draft) return (await restoreRecovery(draft)) ? "recovery" : "welcome";
+  return "welcome";
 }
 
 async function initialize() {
@@ -845,8 +973,17 @@ async function initialize() {
   updateCursorStatus();
   setDirty(false);
 
-  if (await loadInitialDocument()) return;
-  await restoreRecovery();
+  const initialPath = await api.getInitialOpenPath();
+  const draftPromise = api.getRecovery();
+  let initialResult = null;
+  if (initialPath) {
+    try {
+      initialResult = await api.readFile(initialPath);
+    } catch (error) {
+      reportError(error);
+    }
+  }
+  await chooseStartupDocument(initialResult, await draftPromise);
 }
 
 initialize().catch(reportError);

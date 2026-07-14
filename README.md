@@ -12,7 +12,7 @@
 - 可选自动保存、未保存关闭保护和崩溃草稿恢复
 - 原子保存和外部修改冲突检测，避免静默覆盖其他程序的更改
 - UTF-8、UTF-16 LE/BE、GB18030 和换行风格检测与保留
-- 相对本地图片支持；远程图片默认阻止，点击后才加载
+- 相对本地图片支持；远程资源默认完全阻止，点击后经主进程校验、限流并转为本地数据加载
 - DOMPurify 清洗、Electron 沙箱、隔离上下文和受限 IPC
 
 ## 本地运行
@@ -32,7 +32,7 @@ npm run smoke
 npm run test:e2e
 ```
 
-端到端测试会真实创建和修改 Markdown 文件，覆盖打开、覆盖保存、另存为、自动保存、保存竞态、恢复草稿、重新加载保护、撤销/重做、外部冲突、UTF-16/GB18030、CRLF、相对图片、远程图片隐私、HTML 清洗和语法高亮。
+端到端测试会真实创建和修改 Markdown 文件，覆盖打开、覆盖保存、另存为、自动保存、并发保存、恢复草稿、启动恢复选择、重新加载保护、撤销/重做、外部冲突、UTF-16/GB18030、二进制阻止、CRLF、相对图片、远程资源旁路、HTML 清洗和语法高亮。
 
 ## Windows 打包
 
@@ -48,9 +48,9 @@ npm run package:win
 npm run installer:win
 ```
 
-本机输出文件为 `release/installer/清墨-0.3.2-安装程序.exe`；GitHub Release 为避免平台自动剥离中文文件名，使用 `CleanMark-0.3.2-Setup.exe`。安装器仅安装到当前用户的 `%LOCALAPPDATA%\Programs\清墨`，不需要管理员权限，可选创建桌面快捷方式和加入 `.md`、`.markdown` 的“打开方式”列表，不替换现有默认程序。
+本机输出文件为 `release/installer/清墨-0.3.3-安装程序.exe`；GitHub Release 为避免平台自动剥离中文文件名，使用 `CleanMark-0.3.3-Setup.exe`。安装器仅安装到当前用户的 `%LOCALAPPDATA%\Programs\清墨`，不需要管理员权限，可选创建桌面快捷方式和加入 `.md`、`.markdown` 的“打开方式”列表，不替换现有默认程序。正常卸载时可选择同时清除本地设置和恢复草稿。
 
-生成文件不进入 Git 历史；`v*` 标签会由 GitHub Actions 校验标签版本、构建安装器、生成 SHA-256 并发布到 GitHub Release。
+生成文件不进入 Git 历史；本地构建会同时生成中文安装器、英文发布资产和 `SHA256SUMS.txt`。`v*` 标签会由 GitHub Actions 校验标签版本、重新安装测试并发布到 GitHub Release。
 
 > 当前安装器没有商业代码签名，Windows 可能显示“未知发布者”或 SmartScreen 提示。请仅从本仓库 Release 下载并核对 SHA-256。代码签名需要开发者另行提供有效证书。
 
@@ -75,3 +75,7 @@ npm ci
 ## 开源许可
 
 项目代码使用 [MIT](LICENSE) 许可证。第三方组件许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。安全报告方式见 [SECURITY.md](SECURITY.md)，贡献规则见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+## 隐私说明
+
+清墨不包含遥测或广告。未保存内容会以明文恢复草稿保存在当前 Windows 用户的应用数据目录中，并在成功保存或明确放弃后清除。远程图片默认不会联网；只有用户点击后，主进程才会加载公开 HTTPS 位图，并阻止私网地址、非常用端口、非图片响应和超过 10 MB 的内容。

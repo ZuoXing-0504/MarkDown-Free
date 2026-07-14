@@ -522,6 +522,15 @@ textarea:focus {
   cursor: pointer;
 }
 
+.blocked-image-label {
+  display: inline-block;
+  padding: 6px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 5px;
+  color: var(--muted);
+  font: 12px/1.4 Inter, "Segoe UI", system-ui, sans-serif;
+}
+
 .markdown-body table {
   width: 100%;
   border-collapse: collapse;

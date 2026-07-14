@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { copyFile, readFile, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -14,3 +15,16 @@ const { stdout, stderr } = await execFileAsync(compiler, [
 
 if (stdout) process.stdout.write(stdout);
 if (stderr) process.stderr.write(stderr);
+
+const localInstallerName = `清墨-${packageJson.version}-安装程序.exe`;
+const releaseInstallerName = `CleanMark-${packageJson.version}-Setup.exe`;
+const localInstaller = new URL(`../release/installer/${localInstallerName}`, import.meta.url);
+const releaseInstaller = new URL(`../release/installer/${releaseInstallerName}`, import.meta.url);
+await copyFile(localInstaller, releaseInstaller);
+const digest = createHash("sha256").update(await readFile(releaseInstaller)).digest("hex").toUpperCase();
+await writeFile(
+  new URL("../release/installer/SHA256SUMS.txt", import.meta.url),
+  `${digest}  ${releaseInstallerName}\n`,
+  "ascii",
+);
+console.log(`Prepared ${releaseInstallerName} and SHA256SUMS.txt (${digest}).`);
