@@ -41,19 +41,33 @@ jobs:
           $version = (Get-Content package.json -Raw -Encoding UTF8 | ConvertFrom-Json).version
           $releaseName = "CleanMark-$version-Setup.exe"
           $releasePath = "release/installer/$releaseName"
+          $chineseName = "清墨-$version-安装程序.exe"
+          $chinesePath = "release/installer/$chineseName"
           if (!(Test-Path -LiteralPath $releasePath)) { throw "Missing release asset $releaseName." }
-          Get-FileHash $releasePath -Algorithm SHA256 | ForEach-Object { "$($_.Hash)  $releaseName" } | Set-Content -Encoding ascii "release/installer/SHA256SUMS.txt"
+          if (!(Test-Path -LiteralPath $chinesePath)) { throw "Missing release asset $chineseName." }
+          $releaseHash = (Get-FileHash $releasePath -Algorithm SHA256).Hash
+          $chineseHash = (Get-FileHash $chinesePath -Algorithm SHA256).Hash
+          if ($releaseHash -ne $chineseHash) { throw "Chinese and English installer assets differ." }
+          $checksumLines = @(
+            "$releaseHash  $releaseName"
+            "$chineseHash  $chineseName"
+          )
+          $checksumPath = Join-Path (Resolve-Path "release/installer").Path "SHA256SUMS.txt"
+          $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+          [System.IO.File]::WriteAllLines($checksumPath, $checksumLines, $utf8NoBom)
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cleanmark-windows-installer
           path: |
             release/installer/CleanMark-*-Setup.exe
+            release/installer/清墨-*-安装程序.exe
             release/installer/SHA256SUMS.txt
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           generate_release_notes: true
           files: |
             release/installer/CleanMark-*-Setup.exe
+            release/installer/清墨-*-安装程序.exe
             release/installer/SHA256SUMS.txt
           body: |
             清墨 Windows 安装器，仅安装到当前用户目录，不需要管理员权限。

@@ -24,7 +24,7 @@ await copyFile(localInstaller, releaseInstaller);
 const digest = createHash("sha256").update(await readFile(releaseInstaller)).digest("hex").toUpperCase();
 await writeFile(
   new URL("../release/installer/SHA256SUMS.txt", import.meta.url),
-  `${digest}  ${releaseInstallerName}\n`,
-  "ascii",
+  `${digest}  ${releaseInstallerName}\n${digest}  ${localInstallerName}\n`,
+  "utf8",
 );
 console.log(`Prepared ${releaseInstallerName} and SHA256SUMS.txt (${digest}).`);
