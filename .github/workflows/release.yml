@@ -34,32 +34,7 @@ jobs:
       - run: npm audit
       - run: npm run installer:win
       - name: 验证安装、已安装应用和卸载
-        shell: powershell
-        run: |
-          $version = (Get-Content package.json -Raw -Encoding UTF8 | ConvertFrom-Json).version
-          $installer = Get-Item "release/installer/CleanMark-$version-Setup.exe"
-          $installDir = Join-Path $env:RUNNER_TEMP "cleanmark-installed"
-          try {
-            $installProcess = Start-Process -FilePath $installer.FullName -ArgumentList @(
-              '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/TASKS=', "/DIR=$installDir"
-            ) -WindowStyle Hidden -Wait -PassThru
-            if ($installProcess.ExitCode -ne 0) { throw "Installer exited with $($installProcess.ExitCode)." }
-            $smokeProcess = Start-Process -FilePath "$installDir\清墨.exe" -ArgumentList '--smoke-test' -WindowStyle Hidden -Wait -PassThru
-            if ($smokeProcess.ExitCode -ne 0) { throw "Installed smoke test exited with $($smokeProcess.ExitCode)." }
-            node scripts/prepare-e2e.mjs
-            $e2eDirectory = (Resolve-Path "test-results/md-workspace").Path
-            $e2eProcess = Start-Process -FilePath "$installDir\清墨.exe" -ArgumentList @(
-              '--e2e-test', "--e2e-dir=$e2eDirectory"
-            ) -WindowStyle Hidden -Wait -PassThru
-            if ($e2eProcess.ExitCode -ne 0) { throw "Installed E2E test exited with $($e2eProcess.ExitCode)." }
-          } finally {
-            if (Test-Path "$installDir\unins000.exe") {
-              $uninstallProcess = Start-Process -FilePath "$installDir\unins000.exe" -ArgumentList @(
-                '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
-              ) -WindowStyle Hidden -Wait -PassThru
-              if ($uninstallProcess.ExitCode -ne 0) { throw "Uninstaller exited with $($uninstallProcess.ExitCode)." }
-            }
-          }
+        run: node scripts/test-installed.mjs
       - name: 准备 GitHub Release 文件
         shell: powershell
         run: |
