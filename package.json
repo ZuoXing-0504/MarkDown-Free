@@ -1,6 +1,6 @@
 {
   "name": "cleanmark",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "description": "清墨：一款从零独立开发的桌面 Markdown 编辑器。",
   "productName": "清墨",
   "author": {
@@ -17,12 +17,29 @@
     "check": "npm run build && node --check electron/main.cjs && node --check electron/preload.cjs",
     "smoke": "npm run build && electron . --smoke-test",
     "test:e2e": "npm run build && node scripts/prepare-e2e.mjs && electron . --e2e-test --e2e-dir=test-results/md-workspace",
+    "test:conversion": "npm run build && electron . --conversion-e2e-test --conversion-e2e-dir=test-results/conversion-e2e",
+    "test:conversion:modules": "node scripts/test-conversion-modules.mjs",
+    "test:ocr": "node scripts/test-ocr.mjs",
     "build:icon": "node scripts/build-icon.mjs",
     "package:win": "npm run build:icon && npm run build && node scripts/package-win.mjs",
     "installer:win": "npm run package:win && node scripts/build-installer.mjs"
   },
   "dependencies": {
-    "iconv-lite": "0.7.3"
+    "@napi-rs/canvas": "^0.1.100",
+    "docx": "^9.5.1",
+    "iconv-lite": "0.7.3",
+    "jszip": "^3.10.1",
+    "mammoth": "^1.11.0",
+    "pdfjs-dist": "^5.4.530",
+    "pptxgenjs": "^4.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "remark-stringify": "^11.0.0",
+    "sharp": "^0.35.3",
+    "tesseract.js": "^7.0.0",
+    "turndown": "^7.2.2",
+    "turndown-plugin-gfm": "^1.0.2",
+    "unified": "^11.0.5"
   },
   "devDependencies": {
     "@electron/packager": "20.0.2",
@@ -30,7 +47,6 @@
     "electron": "43.1.0",
     "esbuild": "0.28.1",
     "highlight.js": "11.11.1",
-    "marked": "18.0.6",
-    "sharp": "0.34.5"
+    "marked": "18.0.6"
   }
 }

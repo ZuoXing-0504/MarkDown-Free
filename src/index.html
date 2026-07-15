@@ -23,6 +23,7 @@
         <div class="top-actions">
           <button id="new-button" class="button" type="button">新建</button>
           <button id="open-button" class="button" type="button">打开</button>
+          <button id="convert-button" class="button" type="button">转换</button>
           <button id="save-button" class="button primary" type="button">保存</button>
         </div>
       </header>
@@ -92,6 +93,194 @@
         </footer>
       </main>
     </div>
+
+    <dialog id="conversion-dialog" class="conversion-dialog" aria-labelledby="conversion-title">
+      <div class="conversion-shell">
+        <header class="conversion-header">
+          <div>
+            <h2 id="conversion-title">文档转换中心</h2>
+            <p>Markdown、Word、PDF、PPT 在本机转换，文档不会上传。</p>
+          </div>
+          <button id="conversion-close-icon" class="dialog-close" type="button" aria-label="关闭转换中心">×</button>
+        </header>
+
+        <div class="conversion-body">
+          <section class="conversion-section" aria-labelledby="conversion-source-title">
+            <div class="section-heading">
+              <div>
+                <h3 id="conversion-source-title">1. 选择来源</h3>
+                <p>当前文档可直接使用编辑器中的未保存内容。</p>
+              </div>
+            </div>
+            <div class="choice-grid source-choice-grid">
+              <label class="choice-card">
+                <input id="conversion-source-editor" name="conversion-source" type="radio" value="editor" checked />
+                <span>
+                  <strong>当前 Markdown</strong>
+                  <small id="conversion-current-detail">未命名文档</small>
+                </span>
+              </label>
+              <label class="choice-card">
+                <input id="conversion-source-file" name="conversion-source" type="radio" value="file" />
+                <span>
+                  <strong>外部文档</strong>
+                  <small>支持 MD、DOCX、PDF、PPTX</small>
+                </span>
+              </label>
+            </div>
+            <div id="conversion-file-row" class="path-row" hidden>
+              <input id="conversion-input-path" type="text" readonly placeholder="尚未选择外部文档" aria-label="转换来源路径" />
+              <button id="conversion-input-button" class="button" type="button">选择文件…</button>
+            </div>
+            <div id="conversion-source-notice" class="inline-notice" hidden></div>
+          </section>
+
+          <section class="conversion-section" aria-labelledby="conversion-target-title">
+            <div class="section-heading">
+              <div>
+                <h3 id="conversion-target-title">2. 目标与模式</h3>
+                <p>可编辑模式保留结构，视觉保真模式优先保持页面外观。</p>
+              </div>
+            </div>
+            <div class="conversion-fields">
+              <label class="field-row">
+                <span>目标格式</span>
+                <select id="conversion-target">
+                  <option value="pdf">PDF 文档（.pdf）</option>
+                  <option value="docx">Word 文档（.docx）</option>
+                  <option value="pptx">PowerPoint 演示文稿（.pptx）</option>
+                  <option value="md">Markdown（.md）</option>
+                </select>
+              </label>
+              <div class="choice-grid">
+                <label class="choice-card">
+                  <input id="conversion-mode-editable" name="conversion-mode" type="radio" value="editable" checked />
+                  <span>
+                    <strong>可编辑</strong>
+                    <small>尽量保留标题、段落、列表、表格、代码、图片和链接</small>
+                  </span>
+                </label>
+                <label class="choice-card">
+                  <input id="conversion-mode-visual" name="conversion-mode" type="radio" value="visual" />
+                  <span>
+                    <strong>视觉保真</strong>
+                    <small>复杂页面转为高清图片，外观更稳定但编辑能力有限</small>
+                  </span>
+                </label>
+              </div>
+            </div>
+          </section>
+
+          <section class="conversion-section" aria-labelledby="conversion-options-title">
+            <div class="section-heading">
+              <div>
+                <h3 id="conversion-options-title">3. 转换选项</h3>
+                <p>远程图片默认阻止；扫描版 PDF 可使用本地 OCR。</p>
+              </div>
+            </div>
+            <div class="conversion-options">
+              <label id="conversion-remote-row" class="setting-card">
+                <input id="conversion-remote-images" type="checkbox" />
+                <span>
+                  <strong>允许获取远程图片</strong>
+                  <small>仅通过清墨的安全图片通道获取，默认关闭</small>
+                </span>
+              </label>
+              <label id="conversion-ocr-row" class="setting-card">
+                <input id="conversion-ocr" type="checkbox" />
+                <span>
+                  <strong>对扫描版 PDF 使用 OCR</strong>
+                  <small>最多识别 200 页，语言数据保存在本机</small>
+                </span>
+              </label>
+            </div>
+            <div id="conversion-ocr-languages" class="ocr-languages" hidden>
+              <div class="ocr-language-row">
+                <label><input id="conversion-ocr-chi-sim" type="checkbox" checked /> 简体中文</label>
+                <span id="conversion-ocr-chi-sim-status" class="component-status">正在检查…</span>
+                <button class="text-action" type="button" data-ocr-download="chi_sim">下载语言包</button>
+              </div>
+              <div class="ocr-language-row">
+                <label><input id="conversion-ocr-eng" type="checkbox" checked /> English</label>
+                <span id="conversion-ocr-eng-status" class="component-status">正在检查…</span>
+                <button class="text-action" type="button" data-ocr-download="eng">下载语言包</button>
+              </div>
+              <div id="conversion-component-progress" class="component-download" hidden></div>
+            </div>
+          </section>
+
+          <section class="conversion-section" aria-labelledby="conversion-output-title">
+            <div class="section-heading">
+              <div>
+                <h3 id="conversion-output-title">4. 保存位置</h3>
+                <p>已有文件会在转换开始前再次确认覆盖。</p>
+              </div>
+            </div>
+            <div class="path-row">
+              <input id="conversion-output-path" type="text" readonly placeholder="请选择转换结果保存位置" aria-label="转换输出路径" />
+              <button id="conversion-output-button" class="button" type="button">选择位置…</button>
+            </div>
+          </section>
+
+          <section class="conversion-section component-section" aria-labelledby="conversion-engine-title">
+            <div class="section-heading compact-heading">
+              <div>
+                <h3 id="conversion-engine-title">转换引擎</h3>
+                <p>清墨会按 Office、LibreOffice、Pandoc、内置转换器的顺序自动选择。</p>
+              </div>
+              <button id="conversion-refresh-capabilities" class="text-action" type="button">重新检测</button>
+            </div>
+            <div id="conversion-capabilities" class="capability-grid" aria-live="polite">
+              <div class="capability-item"><span>Microsoft Office</span><span class="component-status">正在检测…</span></div>
+              <div class="capability-item"><span>LibreOffice</span><span class="component-status">正在检测…</span></div>
+              <div class="capability-item"><span>Pandoc</span><span class="component-status">正在检测…</span></div>
+              <div class="capability-item"><span>清墨内置转换器</span><span class="component-status available">可用</span></div>
+            </div>
+          </section>
+
+          <section id="conversion-progress-panel" class="conversion-section progress-section" hidden aria-live="polite">
+            <div class="progress-heading">
+              <strong id="conversion-progress-message">准备转换…</strong>
+              <span id="conversion-progress-percent">0%</span>
+            </div>
+            <progress id="conversion-progress" max="1" value="0"></progress>
+            <div id="conversion-progress-stages" class="progress-stages">
+              <span data-stage="analyze">分析</span>
+              <span data-stage="extract">提取</span>
+              <span data-stage="ocr">OCR</span>
+              <span data-stage="generate">生成</span>
+              <span data-stage="save">保存</span>
+              <span data-stage="cleanup">清理</span>
+            </div>
+          </section>
+
+          <section id="conversion-report" class="conversion-section conversion-report" hidden aria-live="polite">
+            <div class="report-title-row">
+              <div>
+                <h3 id="conversion-report-title">转换完成</h3>
+                <p id="conversion-report-summary"></p>
+              </div>
+              <span id="conversion-report-badge" class="report-badge">完成</span>
+            </div>
+            <div id="conversion-report-warnings" class="report-warnings" hidden></div>
+            <div id="conversion-result-actions" class="result-actions" hidden>
+              <button id="conversion-open-result" class="button primary" type="button">打开文件</button>
+              <button id="conversion-show-result" class="button" type="button">打开所在目录</button>
+              <button id="conversion-open-markdown" class="button" type="button" hidden>在清墨中打开</button>
+            </div>
+          </section>
+        </div>
+
+        <footer class="conversion-footer">
+          <span id="conversion-validation" class="validation-message"></span>
+          <div>
+            <button id="conversion-cancel" class="button" type="button" hidden>取消转换</button>
+            <button id="conversion-close" class="button" type="button">关闭</button>
+            <button id="conversion-start" class="button primary" type="button">开始转换</button>
+          </div>
+        </footer>
+      </div>
+    </dialog>
     <script src="./renderer.js"></script>
   </body>
 </html>

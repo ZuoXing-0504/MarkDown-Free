@@ -1,7 +1,7 @@
 #define AppName "清墨"
 #define AppEnglishName "CleanMark"
 #ifndef AppVersion
-  #define AppVersion "0.3.3"
+  #define AppVersion "0.4.0"
 #endif
 #define AppPublisher "ZuoXing-0504"
 #define AppURL "https://github.com/ZuoXing-0504/MarkDown-Free"

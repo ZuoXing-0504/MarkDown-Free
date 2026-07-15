@@ -20,7 +20,7 @@ const outputPaths = await packager({
   out: fileURLToPath(new URL("../release", import.meta.url)),
   overwrite: true,
   prune: true,
-  asar: true,
+  asar: { unpack: "**/*.{node,dll,ps1}" },
   appVersion: packageJson.version,
   buildVersion: packageJson.version,
   appCopyright: "Copyright © 2026 ZuoXing-0504",

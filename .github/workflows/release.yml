@@ -29,8 +29,10 @@ jobs:
             throw "Git tag '$actualTag' does not match package.json version '$expectedTag'."
           }
       - run: npm run check
+      - run: npm run test:conversion:modules
       - run: npm run smoke
       - run: npm run test:e2e
+      - run: npm run test:conversion
       - run: npm audit
       - run: npm run installer:win
       - name: 验证安装、已安装应用和卸载

@@ -1,6 +1,7 @@
 "use strict";
 
 const { app, BrowserWindow, dialog, ipcMain, Menu, shell } = require("electron");
+const fsSync = require("node:fs");
 const fs = require("node:fs/promises");
 const crypto = require("node:crypto");
 const dns = require("node:dns/promises");
@@ -13,11 +14,15 @@ const iconv = require("iconv-lite");
 
 const MARKDOWN_EXTENSIONS = new Set([".md", ".markdown", ".mdown", ".mkd", ".txt"]);
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
+const MAX_CONVERSION_BYTES = 100 * 1024 * 1024;
 const MAX_TREE_FILES = 2000;
 const MAX_REMOTE_IMAGE_BYTES = 10 * 1024 * 1024;
 const REMOTE_IMAGE_TIMEOUT_MS = 15_000;
 const RECOVERY_FILE = "recovery-draft.json";
 const ALLOWED_REMOTE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif"]);
+const CONVERSION_INPUT_TYPES = new Set(["md", "docx", "doc", "pdf", "pptx", "ppt"]);
+const CONVERSION_TARGET_TYPES = new Set(["md", "docx", "pdf", "pptx"]);
+const CONVERSION_OCR_LANGUAGES = new Set(["chi_sim", "eng"]);
 const blockedRemoteAddresses = new net.BlockList();
 for (const [network, prefix, type] of [
   ["0.0.0.0", 8, "ipv4"],
@@ -50,27 +55,52 @@ for (const [network, prefix, type] of [
   blockedRemoteAddresses.addSubnet(network, prefix, type);
 }
 const windowState = new WeakMap();
+const conversionJobs = new Map();
+const conversionAccess = new Map();
 let recoveryQueue = Promise.resolve();
-const smokeTest = process.argv.includes("--smoke-test");
-const e2eTest = process.argv.includes("--e2e-test");
-const e2eDirectoryArgument = process.argv.find((argument) => argument.startsWith("--e2e-dir="));
-const e2eDirectory = e2eDirectoryArgument ? path.resolve(e2eDirectoryArgument.slice("--e2e-dir=".length)) : null;
+let conversionModulePromise = null;
+function commandLineSwitch(name) {
+  const argument = process.argv.find((value) => value === `--${name}` || value.startsWith(`--${name}=`));
+  if (argument) return argument === `--${name}` ? "" : argument.slice(name.length + 3);
+  return app.commandLine.hasSwitch(name) ? app.commandLine.getSwitchValue(name) : null;
+}
 
-if (smokeTest || e2eTest) {
+const testMode = process.env.CLEANMARK_TEST_MODE || "";
+const smokeTest = testMode === "smoke" || commandLineSwitch("smoke-test") !== null;
+const e2eTest = testMode === "e2e" || commandLineSwitch("e2e-test") !== null;
+const conversionE2eTest = testMode === "conversion-e2e" || commandLineSwitch("conversion-e2e-test") !== null;
+const e2eDirectoryValue = process.env.CLEANMARK_E2E_DIR || commandLineSwitch("e2e-dir");
+const e2eDirectory = e2eDirectoryValue ? path.resolve(e2eDirectoryValue) : null;
+const conversionE2eDirectoryValue = process.env.CLEANMARK_CONVERSION_E2E_DIR || commandLineSwitch("conversion-e2e-dir");
+const conversionE2eDirectory = conversionE2eDirectoryValue ? path.resolve(conversionE2eDirectoryValue) : null;
+const smokeReportPath = process.env.CLEANMARK_SMOKE_REPORT ? path.resolve(process.env.CLEANMARK_SMOKE_REPORT) : null;
+
+if (smokeTest || e2eTest || conversionE2eTest) {
   app.disableHardwareAcceleration();
   app.commandLine.appendSwitch("disable-gpu");
   app.setPath("userData", path.join(os.tmpdir(), `cleanmark-test-${process.pid}`));
 }
 
-const gotSingleInstanceLock = smokeTest || e2eTest || app.requestSingleInstanceLock();
+const gotSingleInstanceLock = smokeTest || e2eTest || conversionE2eTest || app.requestSingleInstanceLock();
 
 if (!gotSingleInstanceLock) app.quit();
 
-if (smokeTest || e2eTest) {
-  const timeout = e2eTest ? 120_000 : 30_000;
-  setTimeout(() => {
-    console.error(`${e2eTest ? "E2E" : "SMOKE"}_FAILED Timed out after ${timeout}ms.`);
-    app.exit(1);
+let testTimeout = null;
+
+function exitTest(code) {
+  if (testTimeout) {
+    clearTimeout(testTimeout);
+    testTimeout = null;
+  }
+  process.exit(code);
+}
+
+if (smokeTest || e2eTest || conversionE2eTest) {
+  const timeout = conversionE2eTest ? 240_000 : e2eTest ? 120_000 : 30_000;
+  testTimeout = setTimeout(() => {
+    const label = conversionE2eTest ? "CONVERSION_E2E" : e2eTest ? "E2E" : "SMOKE";
+    console.error(`${label}_FAILED Timed out after ${timeout}ms.`);
+    exitTest(1);
   }, timeout);
 }
 
@@ -79,6 +109,87 @@ function stateFor(window) {
     windowState.set(window, { dirty: false, allowClose: false, closePromptOpen: false });
   }
   return windowState.get(window);
+}
+
+function conversionModule() {
+  conversionModulePromise ||= import(pathToFileURL(path.join(__dirname, "conversion", "index.mjs")).href);
+  return conversionModulePromise;
+}
+
+function conversionPathKey(filePath) {
+  return path.resolve(filePath).toLowerCase();
+}
+
+function conversionAccessFor(sender) {
+  if (!conversionAccess.has(sender.id)) conversionAccess.set(sender.id, { inputs: new Set(), outputs: new Set(), results: new Set() });
+  return conversionAccess.get(sender.id);
+}
+
+function ocrDirectory() {
+  return path.join(app.getPath("userData"), "conversion-tools", "ocr");
+}
+
+function conversionType(filePath) {
+  const extension = path.extname(filePath || "").toLowerCase();
+  if (extension === ".md" || extension === ".markdown") return "md";
+  return extension.slice(1);
+}
+
+function validateConversionPayload(payload) {
+  if (!payload || typeof payload !== "object") throw new Error("转换任务无效。");
+  if (typeof payload.jobId !== "string" || !/^[a-zA-Z0-9-]{8,80}$/.test(payload.jobId)) throw new Error("转换任务编号无效。");
+  if (!payload.source || !["editor", "file"].includes(payload.source.kind)) throw new Error("转换来源无效。");
+  if (!CONVERSION_TARGET_TYPES.has(payload.target)) throw new Error("转换目标格式无效。");
+  if (!["editable", "visual"].includes(payload.mode)) throw new Error("转换模式无效。");
+  if (typeof payload.outputPath !== "string" || payload.outputPath.includes("\0") || !path.isAbsolute(payload.outputPath)) {
+    throw new Error("转换输出路径无效。");
+  }
+  const expectedExtension = payload.target === "md" ? ".md" : `.${payload.target}`;
+  if (path.extname(payload.outputPath).toLowerCase() !== expectedExtension) throw new Error(`输出文件必须使用 ${expectedExtension} 扩展名。`);
+
+  let source;
+  if (payload.source.kind === "editor") {
+    if (typeof payload.source.content !== "string") throw new Error("当前文档内容无效。");
+    if (Buffer.byteLength(payload.source.content, "utf8") > MAX_CONVERSION_BYTES) throw new Error("当前文档超过 100 MB 转换限制。");
+    if (payload.target === "md") throw new Error("当前 Markdown 文档无需转换为 Markdown。");
+    if (payload.source.filePath != null && (
+      typeof payload.source.filePath !== "string"
+      || payload.source.filePath.includes("\0")
+      || !path.isAbsolute(payload.source.filePath)
+    )) throw new Error("当前文档基准路径无效。");
+    source = {
+      kind: "editor",
+      content: payload.source.content,
+      filePath: payload.source.filePath ? path.resolve(payload.source.filePath) : null,
+    };
+  } else {
+    if (typeof payload.source.filePath !== "string" || payload.source.filePath.includes("\0") || !path.isAbsolute(payload.source.filePath)) {
+      throw new Error("转换来源路径无效。");
+    }
+    const filePath = path.resolve(payload.source.filePath);
+    if (!CONVERSION_INPUT_TYPES.has(conversionType(filePath))) throw new Error("不支持该来源文件格式。");
+    if (filePath.toLowerCase() === path.resolve(payload.outputPath).toLowerCase()) throw new Error("输出路径不能覆盖来源文件。");
+    source = { kind: "file", filePath };
+  }
+
+  const requestedLanguages = payload.options?.ocrLanguages ?? ["chi_sim", "eng"];
+  if (!Array.isArray(requestedLanguages) || requestedLanguages.some((language) => !CONVERSION_OCR_LANGUAGES.has(language))) {
+    throw new Error("OCR 语言选项无效。");
+  }
+  const ocrLanguages = [...new Set(requestedLanguages)];
+  if (payload.options?.ocr && !ocrLanguages.length) throw new Error("请至少选择一种 OCR 语言。");
+  return {
+    jobId: payload.jobId,
+    source,
+    target: payload.target,
+    mode: payload.mode,
+    outputPath: path.resolve(payload.outputPath),
+    options: {
+      includeRemoteImages: Boolean(payload.options?.includeRemoteImages),
+      ocr: Boolean(payload.options?.ocr),
+      ocrLanguages,
+    },
+  };
 }
 
 function fingerprint(buffer) {
@@ -323,6 +434,7 @@ function buildMenu() {
         { type: "separator" },
         { label: "保存", accelerator: "CmdOrCtrl+S", click: () => sendCommand("save") },
         { label: "另存为...", accelerator: "CmdOrCtrl+Shift+S", click: () => sendCommand("save-as") },
+        { label: "文档转换...", accelerator: "CmdOrCtrl+Alt+C", click: () => sendCommand("convert") },
         { type: "separator" },
         { label: "退出", role: "quit" },
       ],
@@ -537,6 +649,160 @@ function registerIpc() {
     await shell.openExternal(parsed.toString());
   });
 
+  ipcMain.handle("conversion:get-capabilities", async () => {
+    const conversion = await conversionModule();
+    const [capabilities, ocr] = await Promise.all([
+      conversion.detectCapabilities(),
+      conversion.getOcrStatus(ocrDirectory()),
+    ]);
+    return {
+      capabilities: {
+        office: {
+          word: { available: capabilities.office.word.available, version: capabilities.office.word.version },
+          powerPoint: { available: capabilities.office.powerPoint.available, version: capabilities.office.powerPoint.version },
+        },
+        libreOffice: { available: capabilities.libreOffice.available, version: capabilities.libreOffice.version },
+        pandoc: { available: capabilities.pandoc.available, version: capabilities.pandoc.version },
+      },
+      ocr,
+      formats: {
+        inputs: ["md", "docx", "doc", "pdf", "pptx", "ppt"],
+        targets: ["md", "docx", "pdf", "pptx"],
+      },
+      limits: { maxBytes: MAX_FILE_BYTES * 5, maxPages: 500, maxOcrPages: 200 },
+    };
+  });
+
+  ipcMain.handle("conversion:choose-input", async (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showOpenDialog(window, {
+      title: "选择要转换的文档",
+      properties: ["openFile"],
+      filters: [
+        { name: "支持的文档", extensions: ["md", "markdown", "docx", "doc", "pdf", "pptx", "ppt"] },
+        { name: "Markdown", extensions: ["md", "markdown"] },
+        { name: "Word", extensions: ["docx", "doc"] },
+        { name: "PDF", extensions: ["pdf"] },
+        { name: "PowerPoint", extensions: ["pptx", "ppt"] },
+      ],
+    });
+    if (result.canceled) return null;
+    const filePath = path.resolve(result.filePaths[0]);
+    conversionAccessFor(event.sender).inputs.add(conversionPathKey(filePath));
+    return filePath;
+  });
+
+  ipcMain.handle("conversion:choose-output", async (event, payload) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    const target = ["md", "docx", "pdf", "pptx"].includes(payload?.target) ? payload.target : null;
+    if (!target) throw new Error("转换目标格式无效。");
+    const extension = target === "md" ? "md" : target;
+    const baseName = String(payload?.baseName || "转换结果").replace(/[<>:"/\\|?*\x00-\x1f]/g, "_");
+    const result = await dialog.showSaveDialog(window, {
+      title: "保存转换结果",
+      defaultPath: `${baseName}.${extension}`,
+      filters: [{ name: target === "md" ? "Markdown" : target.toUpperCase(), extensions: [extension] }],
+    });
+    if (result.canceled) return null;
+    const filePath = path.resolve(result.filePath);
+    conversionAccessFor(event.sender).outputs.add(conversionPathKey(filePath));
+    return filePath;
+  });
+
+  ipcMain.handle("conversion:start", async (event, payload) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window) throw new Error("转换窗口无效。");
+    const request = validateConversionPayload(payload);
+    const access = conversionAccessFor(event.sender);
+    if (!conversionE2eTest && request.source.kind === "file" && !access.inputs.has(conversionPathKey(request.source.filePath))) {
+      throw new Error("转换来源未经过文件选择确认。");
+    }
+    if (!conversionE2eTest && !access.outputs.has(conversionPathKey(request.outputPath))) {
+      throw new Error("转换输出路径未经过保存位置确认。");
+    }
+    if (conversionJobs.has(request.jobId)) throw new Error("转换任务编号重复。");
+    if ([...conversionJobs.values()].some((job) => job.senderId === event.sender.id)) throw new Error("当前窗口已有转换任务正在运行。");
+    const conversion = await conversionModule();
+    if (request.options.ocr) {
+      const ocrStatus = await conversion.getOcrStatus(ocrDirectory());
+      const missing = request.options.ocrLanguages.filter((language) => !ocrStatus[language]?.valid);
+      if (missing.length) throw new Error("所选 OCR 语言包尚未安装或校验失败。");
+    }
+    const assetPath = request.target === "md"
+      ? path.join(path.dirname(request.outputPath), `${path.basename(request.outputPath, path.extname(request.outputPath))}_assets`)
+      : null;
+    const outputExists = await fs.stat(request.outputPath).then(() => true, () => false);
+    const assetsExist = assetPath ? await fs.stat(assetPath).then(() => true, () => false) : false;
+    if (outputExists || assetsExist) {
+      const overwrite = await dialog.showMessageBox(window, {
+        type: "warning",
+        title: "覆盖转换结果",
+        message: outputExists ? `文件已存在：${path.basename(request.outputPath)}` : "转换资源目录已存在",
+        detail: assetsExist
+          ? `继续将替换现有文件及资源目录 ${path.basename(assetPath)}。原始来源文件不会被修改。`
+          : "继续将替换现有文件。原始来源文件不会被修改。",
+        buttons: ["覆盖", "取消"],
+        defaultId: 1,
+        cancelId: 1,
+        noLink: true,
+      });
+      if (overwrite.response !== 0) return { canceled: true };
+    }
+    const controller = new AbortController();
+    conversionJobs.set(request.jobId, { controller, senderId: event.sender.id });
+    const sendProgress = (progress) => {
+      if (!event.sender.isDestroyed()) event.sender.send("conversion:progress", { jobId: request.jobId, ...progress });
+    };
+    try {
+      const result = await conversion.convertDocument(request, {
+        signal: controller.signal,
+        progress: sendProgress,
+        ocrDataPath: ocrDirectory(),
+        remoteImageLoader: (url) => fetchRemoteImage(url).then((dataUrl) => ({ dataUrl })),
+      });
+      sendProgress({ stage: "done", progress: 1, message: "转换完成。" });
+      access.results.add(conversionPathKey(result.outputPath));
+      return { canceled: false, ...result };
+    } finally {
+      conversionJobs.delete(request.jobId);
+    }
+  });
+
+  ipcMain.handle("conversion:cancel", (event, jobId) => {
+    const job = conversionJobs.get(jobId);
+    if (!job || job.senderId !== event.sender.id) return false;
+    job.controller.abort();
+    return true;
+  });
+
+  ipcMain.handle("conversion:download-ocr-language", async (event, language) => {
+    const conversion = await conversionModule();
+    const filePath = await conversion.downloadOcrLanguage(language, ocrDirectory(), (progress) => {
+      if (!event.sender.isDestroyed()) event.sender.send("conversion:component-progress", { language, ...progress });
+    });
+    return { filePath, status: await conversion.getOcrStatus(ocrDirectory()) };
+  });
+
+  ipcMain.handle("conversion:open-component-page", async (_event, component) => {
+    const conversion = await conversionModule();
+    const url = conversion.componentPages[component];
+    if (!url) throw new Error("未知的转换组件。");
+    await shell.openExternal(url);
+  });
+
+  ipcMain.handle("conversion:open-result", async (event, filePath) => {
+    if (typeof filePath !== "string" || !path.isAbsolute(filePath)) throw new Error("结果路径无效。");
+    if (!conversionAccessFor(event.sender).results.has(conversionPathKey(filePath))) throw new Error("该路径不是当前窗口生成的转换结果。");
+    const error = await shell.openPath(filePath);
+    if (error) throw new Error(error);
+  });
+
+  ipcMain.handle("conversion:show-result", (event, filePath) => {
+    if (typeof filePath !== "string" || !path.isAbsolute(filePath)) throw new Error("结果路径无效。");
+    if (!conversionAccessFor(event.sender).results.has(conversionPathKey(filePath))) throw new Error("该路径不是当前窗口生成的转换结果。");
+    shell.showItemInFolder(filePath);
+  });
+
   ipcMain.on("window:set-dirty", (event, dirty) => {
     const window = BrowserWindow.fromWebContents(event.sender);
     if (window) stateFor(window).dirty = Boolean(dirty);
@@ -564,13 +830,137 @@ function registerIpc() {
   });
 }
 
+async function runConversionE2e(window) {
+  if (!conversionE2eDirectory) throw new Error("缺少 --conversion-e2e-dir 参数。");
+  await fs.rm(conversionE2eDirectory, { recursive: true, force: true });
+  await fs.mkdir(path.join(conversionE2eDirectory, "assets"), { recursive: true });
+  const sourcePath = path.join(conversionE2eDirectory, "00-转换源.md");
+  const imagePath = path.join(conversionE2eDirectory, "assets", "test-image.svg");
+  const markdown = `# 清墨转换测试
+
+这是一段包含 **粗体**、[链接](https://github.com/ZuoXing-0504/MarkDown-Free) 和中文的正文。
+
+## 数据表
+
+| 项目 | 状态 |
+| --- | --- |
+| Markdown | 完成 |
+| 文档转换 | 测试中 |
+
+- 列表一
+- 列表二
+
+\`\`\`js
+console.log("CleanMark 0.4.0");
+\`\`\`
+
+![清墨测试图片](assets/test-image.svg)
+`;
+  await fs.writeFile(sourcePath, markdown, "utf8");
+  await fs.writeFile(imagePath, `<svg xmlns="http://www.w3.org/2000/svg" width="480" height="240" viewBox="0 0 480 240"><rect width="480" height="240" rx="24" fill="#17324d"/><path d="M65 55h90v130H65z" fill="#54b7ad"/><path d="M90 85h150v18H90zm0 42h300v14H90zm0 35h240v14H90z" fill="#fff"/><text x="260" y="103" fill="#fff" font-size="30" font-family="Segoe UI, sans-serif">清墨 CleanMark</text></svg>`, "utf8");
+  const outputs = {
+    pdf: path.join(conversionE2eDirectory, "01-Markdown转PDF.pdf"),
+    docx: path.join(conversionE2eDirectory, "02-Markdown转Word.docx"),
+    pptx: path.join(conversionE2eDirectory, "03-Markdown转PPT.pptx"),
+    docxMarkdown: path.join(conversionE2eDirectory, "04-Word转Markdown.md"),
+    pdfMarkdown: path.join(conversionE2eDirectory, "05-PDF转Markdown.md"),
+    docxPdf: path.join(conversionE2eDirectory, "06-Word转PDF.pdf"),
+    docxPptx: path.join(conversionE2eDirectory, "07-Word转PPT.pptx"),
+    pdfDocx: path.join(conversionE2eDirectory, "08-PDF转Word.docx"),
+    pdfPptx: path.join(conversionE2eDirectory, "09-PDF转PPT.pptx"),
+    pptxMarkdown: path.join(conversionE2eDirectory, "10-PPT转Markdown.md"),
+    pptxDocx: path.join(conversionE2eDirectory, "11-PPT转Word.docx"),
+    pptxPdf: path.join(conversionE2eDirectory, "12-PPT转PDF.pdf"),
+    visualPdfDocx: path.join(conversionE2eDirectory, "13-PDF视觉保真转Word.docx"),
+    visualPdfPptx: path.join(conversionE2eDirectory, "14-PDF视觉保真转PPT.pptx"),
+  };
+  const rendererResult = await window.webContents.executeJavaScript(`(async () => {
+    const api = window.cleanmark;
+    const convertButton = document.querySelector("#convert-button");
+    const dialog = document.querySelector("#conversion-dialog");
+    convertButton.click();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const modalOpen = dialog.open;
+    document.querySelector("#conversion-close").click();
+    const run = (source, target, outputPath, mode = "editable") => api.startConversion({
+      jobId: crypto.randomUUID(),
+      source,
+      target,
+      mode,
+      outputPath,
+      options: { includeRemoteImages: false, ocr: false, ocrLanguages: ["chi_sim", "eng"] }
+    });
+    const editorSource = { kind: "editor", content: ${JSON.stringify(markdown)}, filePath: ${JSON.stringify(sourcePath)} };
+    const pdf = await run(editorSource, "pdf", ${JSON.stringify(outputs.pdf)});
+    const docx = await run(editorSource, "docx", ${JSON.stringify(outputs.docx)});
+    const pptx = await run(editorSource, "pptx", ${JSON.stringify(outputs.pptx)});
+    const docxMarkdown = await run({ kind: "file", filePath: ${JSON.stringify(outputs.docx)} }, "md", ${JSON.stringify(outputs.docxMarkdown)});
+    const pdfMarkdown = await run({ kind: "file", filePath: ${JSON.stringify(outputs.pdf)} }, "md", ${JSON.stringify(outputs.pdfMarkdown)});
+    const docxPdf = await run({ kind: "file", filePath: ${JSON.stringify(outputs.docx)} }, "pdf", ${JSON.stringify(outputs.docxPdf)});
+    const docxPptx = await run({ kind: "file", filePath: ${JSON.stringify(outputs.docx)} }, "pptx", ${JSON.stringify(outputs.docxPptx)});
+    const pdfDocx = await run({ kind: "file", filePath: ${JSON.stringify(outputs.pdf)} }, "docx", ${JSON.stringify(outputs.pdfDocx)});
+    const pdfPptx = await run({ kind: "file", filePath: ${JSON.stringify(outputs.pdf)} }, "pptx", ${JSON.stringify(outputs.pdfPptx)});
+    const pptxMarkdown = await run({ kind: "file", filePath: ${JSON.stringify(outputs.pptx)} }, "md", ${JSON.stringify(outputs.pptxMarkdown)});
+    const pptxDocx = await run({ kind: "file", filePath: ${JSON.stringify(outputs.pptx)} }, "docx", ${JSON.stringify(outputs.pptxDocx)});
+    const pptxPdf = await run({ kind: "file", filePath: ${JSON.stringify(outputs.pptx)} }, "pdf", ${JSON.stringify(outputs.pptxPdf)});
+    const visualPdfDocx = await run({ kind: "file", filePath: ${JSON.stringify(outputs.pdf)} }, "docx", ${JSON.stringify(outputs.visualPdfDocx)}, "visual");
+    const visualPdfPptx = await run({ kind: "file", filePath: ${JSON.stringify(outputs.pdf)} }, "pptx", ${JSON.stringify(outputs.visualPdfPptx)}, "visual");
+    return {
+      hasConversionApi: Boolean(api.startConversion && api.cancelConversion && api.getConversionCapabilities),
+      hasConversionUi: Boolean(convertButton && dialog),
+      modalOpen,
+      results: {
+        pdf, docx, pptx, docxMarkdown, pdfMarkdown,
+        docxPdf, docxPptx, pdfDocx, pdfPptx,
+        pptxMarkdown, pptxDocx, pptxPdf,
+        visualPdfDocx, visualPdfPptx
+      }
+    };
+  })()`);
+
+  const readOutputs = await Promise.all(Object.entries(outputs).map(async ([name, filePath]) => [
+    name,
+    await fs.readFile(filePath, filePath.endsWith(".md") ? "utf8" : null),
+  ]));
+  const outputData = Object.fromEntries(readOutputs);
+  const { default: JSZip } = await import("jszip");
+  const zipFiles = Object.entries(outputs).filter(([, filePath]) => /\.(?:docx|pptx)$/i.test(filePath));
+  const zipResults = Object.fromEntries(await Promise.all(zipFiles.map(async ([name]) => [name, await JSZip.loadAsync(outputData[name])])));
+  const docxAssets = `${outputs.docxMarkdown.slice(0, -3)}_assets`;
+  const assetFiles = await fs.readdir(docxAssets).catch(() => []);
+  const directoryEntries = await fs.readdir(conversionE2eDirectory);
+  const assertions = {
+    "转换中心界面可打开": rendererResult.hasConversionUi && rendererResult.modalOpen,
+    "受限转换 API 可用": rendererResult.hasConversionApi,
+    "Markdown 转 PDF": outputData.pdf.subarray(0, 5).toString("ascii") === "%PDF-" && outputData.pdf.length > 1000,
+    "Markdown 转 DOCX": Boolean(zipResults.docx.file("word/document.xml")) && outputData.docx.length > 1000,
+    "Markdown 转 PPTX": Boolean(zipResults.pptx.file("ppt/presentation.xml")) && outputData.pptx.length > 1000,
+    "DOCX 转 Markdown": /清墨转换测试/.test(outputData.docxMarkdown) && /数据表/.test(outputData.docxMarkdown),
+    "DOCX 图片资源落盘": assetFiles.some((name) => /^image-\d+\./.test(name)),
+    "PDF 转 Markdown": /第 1 页/.test(outputData.pdfMarkdown) && outputData.pdfMarkdown.length > 30,
+    "DOCX 转 PDF": outputData.docxPdf.subarray(0, 5).toString("ascii") === "%PDF-",
+    "DOCX 转 PPTX": Boolean(zipResults.docxPptx.file("ppt/presentation.xml")),
+    "PDF 转 DOCX": Boolean(zipResults.pdfDocx.file("word/document.xml")),
+    "PDF 转 PPTX": Boolean(zipResults.pdfPptx.file("ppt/presentation.xml")),
+    "PPTX 转 Markdown": /幻灯片 1/.test(outputData.pptxMarkdown) && outputData.pptxMarkdown.length > 30,
+    "PPTX 转 DOCX": Boolean(zipResults.pptxDocx.file("word/document.xml")),
+    "PPTX 转 PDF": outputData.pptxPdf.subarray(0, 5).toString("ascii") === "%PDF-",
+    "PDF 视觉转 DOCX": Boolean(zipResults.visualPdfDocx.file("word/document.xml")),
+    "PDF 视觉转 PPTX": Boolean(zipResults.visualPdfPptx.file("ppt/presentation.xml")),
+    "转换结果报告完整": Object.values(rendererResult.results).every((result) => result && result.canceled === false && result.outputPath && result.sha256),
+    "临时与备份文件清理": !directoryEntries.some((name) => /\.tmp|cleanmark-backup/i.test(name)),
+  };
+  const errors = Object.entries(assertions).filter(([, passed]) => !passed).map(([name]) => name);
+  return { passed: errors.length === 0, assertions, errors, outputs, rendererResult };
+}
+
 function createWindow(initialPath = null) {
   const window = new BrowserWindow({
     width: 1320,
     height: 860,
     minWidth: 840,
     minHeight: 560,
-    show: !smokeTest && !e2eTest,
+    show: !smokeTest && !e2eTest && !conversionE2eTest,
     backgroundColor: "#f6f7f9",
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -585,6 +975,15 @@ function createWindow(initialPath = null) {
   state.initialPath = initialPath ? path.resolve(initialPath) : null;
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event) => event.preventDefault());
+  window.webContents.once("destroyed", () => conversionAccess.delete(window.webContents.id));
+  if (smokeTest || e2eTest || conversionE2eTest) {
+    window.webContents.on("render-process-gone", (_event, details) => {
+      console.error(`RENDER_PROCESS_GONE ${JSON.stringify(details)}`);
+    });
+    window.webContents.on("console-message", (_event, details) => {
+      if (details.level === "error") console.error(`RENDERER_CONSOLE ${details.message}`);
+    });
+  }
 
   window.on("close", async (event) => {
     const state = stateFor(window);
@@ -617,6 +1016,7 @@ function createWindow(initialPath = null) {
   if (smokeTest) {
     window.webContents.once("did-finish-load", async () => {
       let temporaryDirectory;
+      let exitCode = 1;
       try {
         temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "cleanmark-smoke-"));
         const fixturePath = path.join(temporaryDirectory, "fixture.md");
@@ -657,17 +1057,34 @@ function createWindow(initialPath = null) {
           throw new Error(`Smoke assertions failed: ${JSON.stringify(result)}`);
         }
         console.log(`SMOKE_OK ${JSON.stringify(result)}`);
-        app.exit(0);
+        exitCode = 0;
       } catch (error) {
         console.error(error);
-        app.exit(1);
       } finally {
-        if (temporaryDirectory) await fs.rm(temporaryDirectory, { recursive: true, force: true });
+        if (temporaryDirectory) {
+          try {
+            fsSync.rmSync(temporaryDirectory, { recursive: true, force: true });
+          } catch (error) {
+            console.error(`SMOKE_CLEANUP_FAILED ${error.stack || error}`);
+            exitCode = 1;
+          }
+        }
+        if (smokeReportPath) {
+          try {
+            fsSync.mkdirSync(path.dirname(smokeReportPath), { recursive: true });
+            fsSync.writeFileSync(smokeReportPath, `${JSON.stringify({ passed: exitCode === 0, exitCode }, null, 2)}\n`, "utf8");
+          } catch (error) {
+            console.error(`SMOKE_REPORT_FAILED ${error.stack || error}`);
+            exitCode = 1;
+          }
+        }
+        console.log(`SMOKE_EXIT ${exitCode}`);
+        exitTest(exitCode);
       }
     });
     window.webContents.once("did-fail-load", (_event, code, description) => {
       console.error(`SMOKE_LOAD_FAILED ${code} ${description}`);
-      app.exit(1);
+      exitTest(1);
     });
   }
 
@@ -676,14 +1093,31 @@ function createWindow(initialPath = null) {
     window.webContents.once("did-finish-load", async () => {
       if (!e2eDirectory) {
         console.error("E2E_FAILED Missing --e2e-dir argument.");
-        app.exit(1);
+        exitTest(1);
         return;
       }
       window.webContents.send("app:e2e-run", { directory: e2eDirectory });
     });
   }
 
-  window.loadFile(path.join(__dirname, "..", "dist", "index.html"));
+  if (conversionE2eTest) {
+    window.webContents.once("did-finish-load", async () => {
+      try {
+        const result = await runConversionE2e(window);
+        await fs.writeFile(path.join(conversionE2eDirectory, "测试报告.json"), `${JSON.stringify(result, null, 2)}\n`, "utf8");
+        console.log(`${result.passed ? "CONVERSION_E2E_OK" : "CONVERSION_E2E_FAILED"} ${JSON.stringify(result)}`);
+        exitTest(result.passed ? 0 : 1);
+      } catch (error) {
+        console.error(`CONVERSION_E2E_FAILED ${error.stack || error}`);
+        exitTest(1);
+      }
+    });
+  }
+
+  window.loadFile(path.join(__dirname, "..", "dist", "index.html")).catch((error) => {
+    console.error(`WINDOW_LOAD_FAILED ${error.stack || error}`);
+    if (smokeTest || e2eTest) exitTest(1);
+  });
 }
 
 app.whenReady().then(() => {
@@ -695,7 +1129,7 @@ app.whenReady().then(() => {
       await fs.writeFile(path.join(e2eDirectory, "测试报告.json"), `${JSON.stringify(result, null, 2)}\n`, "utf8");
     }
     console.log(`${passed ? "E2E_OK" : "E2E_FAILED"} ${JSON.stringify(result)}`);
-    app.exit(passed ? 0 : 1);
+    exitTest(passed ? 0 : 1);
   });
   buildMenu();
   const initialPath = markdownPathFromArgs(process.argv.slice(1));

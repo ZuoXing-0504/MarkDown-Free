@@ -62,12 +62,20 @@ body {
 
 button,
 input,
-textarea {
+textarea,
+select {
   font: inherit;
 }
 
 button {
   color: inherit;
+}
+
+button:disabled,
+input:disabled,
+select:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .app {
@@ -606,6 +614,402 @@ textarea:focus {
   border: 0;
 }
 
+.conversion-dialog {
+  width: min(900px, calc(100vw - 40px));
+  max-width: none;
+  height: min(820px, calc(100vh - 40px));
+  max-height: none;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 24px 70px rgb(0 0 0 / 28%);
+}
+
+.conversion-dialog::backdrop {
+  background: rgb(12 18 28 / 52%);
+  backdrop-filter: blur(2px);
+}
+
+.conversion-shell {
+  display: grid;
+  height: 100%;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.conversion-header,
+.conversion-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-color: var(--border);
+  background: var(--panel);
+}
+
+.conversion-header {
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--border);
+}
+
+.conversion-header h2,
+.conversion-section h3 {
+  margin: 0;
+  font-family: Inter, "Segoe UI", system-ui, sans-serif;
+}
+
+.conversion-header h2 {
+  font-size: 19px;
+}
+
+.conversion-header p,
+.section-heading p,
+.report-title-row p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.dialog-close {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.dialog-close:hover {
+  background: var(--panel-muted);
+  color: var(--text);
+}
+
+.conversion-body {
+  display: grid;
+  gap: 12px;
+  padding: 18px 22px 24px;
+  overflow: auto;
+  background: var(--bg);
+}
+
+.conversion-section {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.section-heading,
+.progress-heading,
+.report-title-row,
+.compact-heading {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.conversion-section h3 {
+  font-size: 14px;
+}
+
+.choice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 13px;
+}
+
+.choice-card,
+.setting-card {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  cursor: pointer;
+}
+
+.choice-card:has(input:checked),
+.setting-card:has(input:checked) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--selection) 62%, var(--panel));
+}
+
+.choice-card input,
+.setting-card input {
+  flex: 0 0 auto;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+
+.choice-card span,
+.setting-card span {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.choice-card strong,
+.setting-card strong {
+  font-size: 13px;
+}
+
+.choice-card small,
+.setting-card small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+}
+
+.path-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.path-row input,
+.field-row select {
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  outline: 0;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.path-row input:focus,
+.field-row select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--selection) 70%, transparent);
+}
+
+.inline-notice {
+  margin-top: 10px;
+  padding: 9px 11px;
+  border-radius: 7px;
+  background: #fff6db;
+  color: #72520a;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+:root[data-theme="dark"] .inline-notice {
+  background: #3b3118;
+  color: #f0cf79;
+}
+
+.conversion-fields {
+  display: grid;
+  gap: 2px;
+  margin-top: 12px;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.conversion-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.setting-card[hidden] {
+  display: none;
+}
+
+.ocr-languages {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--panel-muted);
+}
+
+.ocr-language-row {
+  display: grid;
+  grid-template-columns: minmax(130px, 1fr) auto auto;
+  gap: 12px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.ocr-language-row input {
+  accent-color: var(--accent);
+}
+
+.component-status {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.component-status.available {
+  color: #16805a;
+}
+
+.component-status.unavailable {
+  color: #a45233;
+}
+
+.text-action {
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.text-action:hover {
+  text-decoration: underline;
+}
+
+.component-download {
+  padding-top: 5px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.capability-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.capability-item {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 10px;
+  border-radius: 7px;
+  background: var(--panel-muted);
+  font-size: 12px;
+}
+
+.progress-section {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
+.progress-heading {
+  align-items: center;
+  font-size: 12px;
+}
+
+.conversion-dialog progress {
+  width: 100%;
+  height: 8px;
+  margin-top: 11px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 8px;
+  accent-color: var(--accent);
+}
+
+.progress-stages {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 6px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 10px;
+  text-align: center;
+}
+
+.progress-stages span.active {
+  color: var(--accent);
+  font-weight: 650;
+}
+
+.progress-stages span.complete {
+  color: #16805a;
+}
+
+.conversion-report.success {
+  border-color: color-mix(in srgb, #16805a 42%, var(--border));
+}
+
+.conversion-report.error {
+  border-color: color-mix(in srgb, #b64848 55%, var(--border));
+}
+
+.report-badge {
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: #e3f6ee;
+  color: #126745;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.conversion-report.error .report-badge {
+  background: #fde8e8;
+  color: #9a2f2f;
+}
+
+.report-warnings {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 7px;
+  background: var(--panel-muted);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.report-warnings ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.conversion-footer {
+  min-height: 64px;
+  gap: 16px;
+  padding: 12px 22px;
+  border-top: 1px solid var(--border);
+}
+
+.conversion-footer > div {
+  display: flex;
+  gap: 8px;
+}
+
+.validation-message {
+  color: #a45233;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 @media (max-width: 920px) {
   .app {
     grid-template-columns: 190px minmax(0, 1fr);
@@ -615,11 +1019,47 @@ textarea:focus {
     grid-template-columns: 190px 1fr auto;
   }
 
-  .button:not(.primary) {
+  .top-actions .button:not(.primary) {
     display: none;
   }
 
   .format-actions .tool-button:nth-child(n + 5) {
     display: none;
+  }
+}
+
+@media (max-width: 680px) {
+  .conversion-dialog {
+    width: calc(100vw - 16px);
+    height: calc(100vh - 16px);
+  }
+
+  .conversion-header,
+  .conversion-footer {
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+
+  .conversion-body {
+    padding: 12px 14px 18px;
+  }
+
+  .choice-grid,
+  .conversion-options,
+  .capability-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ocr-language-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .ocr-language-row .text-action {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .conversion-footer {
+    align-items: flex-end;
   }
 }

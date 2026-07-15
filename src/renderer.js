@@ -20,6 +20,42 @@ const elements = {
   findPanel: document.querySelector("#find-panel"),
   findInput: document.querySelector("#find-input"),
   encodingStatus: document.querySelector("#encoding-status"),
+  conversionDialog: document.querySelector("#conversion-dialog"),
+  conversionSourceEditor: document.querySelector("#conversion-source-editor"),
+  conversionSourceFile: document.querySelector("#conversion-source-file"),
+  conversionCurrentDetail: document.querySelector("#conversion-current-detail"),
+  conversionFileRow: document.querySelector("#conversion-file-row"),
+  conversionInputPath: document.querySelector("#conversion-input-path"),
+  conversionSourceNotice: document.querySelector("#conversion-source-notice"),
+  conversionTarget: document.querySelector("#conversion-target"),
+  conversionRemoteRow: document.querySelector("#conversion-remote-row"),
+  conversionRemoteImages: document.querySelector("#conversion-remote-images"),
+  conversionOcrRow: document.querySelector("#conversion-ocr-row"),
+  conversionOcr: document.querySelector("#conversion-ocr"),
+  conversionOcrLanguages: document.querySelector("#conversion-ocr-languages"),
+  conversionOcrChiSim: document.querySelector("#conversion-ocr-chi-sim"),
+  conversionOcrEng: document.querySelector("#conversion-ocr-eng"),
+  conversionOcrChiSimStatus: document.querySelector("#conversion-ocr-chi-sim-status"),
+  conversionOcrEngStatus: document.querySelector("#conversion-ocr-eng-status"),
+  conversionComponentProgress: document.querySelector("#conversion-component-progress"),
+  conversionOutputPath: document.querySelector("#conversion-output-path"),
+  conversionCapabilities: document.querySelector("#conversion-capabilities"),
+  conversionProgressPanel: document.querySelector("#conversion-progress-panel"),
+  conversionProgress: document.querySelector("#conversion-progress"),
+  conversionProgressMessage: document.querySelector("#conversion-progress-message"),
+  conversionProgressPercent: document.querySelector("#conversion-progress-percent"),
+  conversionReport: document.querySelector("#conversion-report"),
+  conversionReportTitle: document.querySelector("#conversion-report-title"),
+  conversionReportSummary: document.querySelector("#conversion-report-summary"),
+  conversionReportBadge: document.querySelector("#conversion-report-badge"),
+  conversionReportWarnings: document.querySelector("#conversion-report-warnings"),
+  conversionResultActions: document.querySelector("#conversion-result-actions"),
+  conversionOpenMarkdown: document.querySelector("#conversion-open-markdown"),
+  conversionValidation: document.querySelector("#conversion-validation"),
+  conversionStart: document.querySelector("#conversion-start"),
+  conversionCancel: document.querySelector("#conversion-cancel"),
+  conversionClose: document.querySelector("#conversion-close"),
+  conversionCloseIcon: document.querySelector("#conversion-close-icon"),
 };
 
 const state = {
@@ -44,6 +80,15 @@ const state = {
   recoveryTimer: null,
 };
 let saveQueue = Promise.resolve();
+const conversionState = {
+  capabilities: null,
+  inputPath: null,
+  outputPath: null,
+  jobId: null,
+  running: false,
+  result: null,
+  downloadingLanguage: null,
+};
 
 const welcomeDocument = `# 欢迎使用清墨
 
@@ -540,6 +585,431 @@ function findNext() {
   updateCursorStatus();
 }
 
+function conversionSourceKind() {
+  return elements.conversionSourceFile.checked ? "file" : "editor";
+}
+
+function conversionMode() {
+  return document.querySelector('input[name="conversion-mode"]:checked')?.value === "visual" ? "visual" : "editable";
+}
+
+function conversionExtensionType(filePath) {
+  const extension = (filePath?.match(/\.([^.\\/]+)$/)?.[1] || "").toLowerCase();
+  if (["md", "markdown"].includes(extension)) return "md";
+  if (["doc", "docx", "pdf", "ppt", "pptx"].includes(extension)) return extension;
+  return null;
+}
+
+function normalizedConversionSourceType() {
+  const type = conversionSourceKind() === "editor" ? "md" : conversionExtensionType(conversionState.inputPath);
+  if (type === "doc") return "docx";
+  if (type === "ppt") return "pptx";
+  return type;
+}
+
+function conversionBaseName(filePath) {
+  return baseName(filePath).replace(/\.(?:markdown|md|docx?|pdf|pptx?)$/i, "") || "转换结果";
+}
+
+function unresolvedRelativeImages(markdown) {
+  const matches = [];
+  for (const match of String(markdown || "").matchAll(/!\[[^\]]*\]\(\s*<?([^\s)>]+)>?(?:\s+["'][^"']*["'])?\s*\)/g)) {
+    const source = match[1];
+    if (!/^(?:data:|https?:|\/\/|file:|#|[a-zA-Z]:[\\/]|[\\/])/i.test(source)) matches.push(source);
+  }
+  return [...new Set(matches)].slice(0, 8);
+}
+
+function selectedOcrLanguages() {
+  return [
+    elements.conversionOcrChiSim.checked ? "chi_sim" : null,
+    elements.conversionOcrEng.checked ? "eng" : null,
+  ].filter(Boolean);
+}
+
+function ocrLanguageReady(language) {
+  return Boolean(conversionState.capabilities?.ocr?.[language]?.valid);
+}
+
+function setConversionSourceNotice() {
+  let message = "";
+  const sourceType = conversionExtensionType(conversionState.inputPath);
+  if (conversionSourceKind() === "editor" && !state.filePath) {
+    const images = unresolvedRelativeImages(elements.editor.value);
+    if (images.length) message = `未命名文档含有无法确定基准目录的相对图片：${images.join("、")}`;
+  } else if (["doc", "ppt"].includes(sourceType)) {
+    const capabilities = conversionState.capabilities?.capabilities;
+    const officeAvailable = sourceType === "doc"
+      ? capabilities?.office?.word?.available
+      : capabilities?.office?.powerPoint?.available;
+    if (!officeAvailable && !capabilities?.libreOffice?.available) {
+      message = `旧版 .${sourceType} 文件需要 Microsoft Office 或 LibreOffice 才能读取。`;
+    }
+  }
+  elements.conversionSourceNotice.textContent = message;
+  elements.conversionSourceNotice.hidden = !message;
+}
+
+function updateOcrLanguageStatus() {
+  for (const [language, statusElement] of [
+    ["chi_sim", elements.conversionOcrChiSimStatus],
+    ["eng", elements.conversionOcrEngStatus],
+  ]) {
+    const status = conversionState.capabilities?.ocr?.[language];
+    statusElement.textContent = status?.valid ? "已安装并校验" : status?.installed ? "校验失败，需重新下载" : "未安装";
+    statusElement.className = `component-status ${status?.valid ? "available" : "unavailable"}`;
+    const button = document.querySelector(`[data-ocr-download="${language}"]`);
+    button.hidden = Boolean(status?.valid);
+    button.textContent = status?.installed ? "重新下载" : "下载语言包";
+    button.disabled = conversionState.downloadingLanguage !== null;
+  }
+}
+
+function capabilityItem(name, description, available, component = null) {
+  const item = document.createElement("div");
+  item.className = "capability-item";
+  const label = document.createElement("span");
+  label.textContent = name;
+  const value = document.createElement("span");
+  value.className = `component-status ${available ? "available" : "unavailable"}`;
+  value.textContent = description;
+  item.append(label, value);
+  if (!available && component) {
+    const button = document.createElement("button");
+    button.className = "text-action";
+    button.type = "button";
+    button.dataset.component = component;
+    button.textContent = "官方下载";
+    item.append(button);
+  }
+  return item;
+}
+
+function renderConversionCapabilities() {
+  const capabilities = conversionState.capabilities?.capabilities;
+  if (!capabilities) {
+    elements.conversionCapabilities.replaceChildren(capabilityItem("转换组件", "检测失败，可使用内置转换器", false));
+    updateOcrLanguageStatus();
+    return;
+  }
+  const officeParts = [];
+  if (capabilities.office.word.available) officeParts.push("Word");
+  if (capabilities.office.powerPoint.available) officeParts.push("PowerPoint");
+  elements.conversionCapabilities.replaceChildren(
+    capabilityItem("Microsoft Office", officeParts.length ? `${officeParts.join("、")} 可用` : "未检测到", officeParts.length > 0, "office"),
+    capabilityItem("LibreOffice", capabilities.libreOffice.available ? capabilities.libreOffice.version || "可用" : "未安装", capabilities.libreOffice.available, "libreOffice"),
+    capabilityItem("Pandoc", capabilities.pandoc.available ? capabilities.pandoc.version || "可用" : "未安装", capabilities.pandoc.available, "pandoc"),
+    capabilityItem("清墨内置转换器", "可用", true),
+  );
+  updateOcrLanguageStatus();
+}
+
+async function refreshConversionCapabilities(force = true) {
+  if (!force && conversionState.capabilities) {
+    renderConversionCapabilities();
+    return;
+  }
+  elements.conversionCapabilities.replaceChildren(capabilityItem("转换组件", "正在检测…", false));
+  try {
+    conversionState.capabilities = await api.getConversionCapabilities();
+    renderConversionCapabilities();
+  } catch (error) {
+    conversionState.capabilities = null;
+    renderConversionCapabilities();
+    elements.conversionValidation.textContent = `转换能力检测失败：${error.message}`;
+  }
+  updateConversionOptions(false);
+}
+
+function ensureAvailableTarget() {
+  const sourceType = normalizedConversionSourceType();
+  for (const option of elements.conversionTarget.options) option.disabled = Boolean(sourceType && option.value === sourceType);
+  if (elements.conversionTarget.selectedOptions[0]?.disabled) {
+    const next = [...elements.conversionTarget.options].find((option) => !option.disabled);
+    if (next) elements.conversionTarget.value = next.value;
+  }
+}
+
+function updateConversionOptions(resetOutput = true) {
+  const fileSource = conversionSourceKind() === "file";
+  elements.conversionFileRow.hidden = !fileSource;
+  elements.conversionCurrentDetail.textContent = state.filePath
+    ? `${baseName(state.filePath)}${state.dirty ? "（含未保存更改）" : ""}`
+    : `未命名文档${state.dirty ? "（含未保存更改）" : ""}`;
+  ensureAvailableTarget();
+  const sourceType = normalizedConversionSourceType();
+  elements.conversionRemoteRow.hidden = sourceType !== "md";
+  const ocrApplicable = sourceType === "pdf" && conversionMode() === "editable";
+  elements.conversionOcrRow.hidden = !ocrApplicable;
+  if (!ocrApplicable) elements.conversionOcr.checked = false;
+  elements.conversionOcrLanguages.hidden = !elements.conversionOcr.checked || !ocrApplicable;
+  if (resetOutput) {
+    conversionState.outputPath = null;
+    elements.conversionOutputPath.value = "";
+  }
+  setConversionSourceNotice();
+  validateConversion();
+}
+
+function conversionValidationMessage() {
+  const sourceType = normalizedConversionSourceType();
+  if (conversionSourceKind() === "file" && !conversionState.inputPath) return "请选择要转换的外部文档。";
+  if (conversionSourceKind() === "file" && !sourceType) return "不支持所选来源文件格式。";
+  if (conversionSourceKind() === "editor" && new Blob([elements.editor.value]).size > 100 * 1024 * 1024) return "当前文档超过 100 MB 转换限制。";
+  const originalType = conversionExtensionType(conversionState.inputPath);
+  if (["doc", "ppt"].includes(originalType)) {
+    const capabilities = conversionState.capabilities?.capabilities;
+    const officeAvailable = originalType === "doc" ? capabilities?.office?.word?.available : capabilities?.office?.powerPoint?.available;
+    if (!officeAvailable && !capabilities?.libreOffice?.available) return `读取 .${originalType} 文件需要安装 Microsoft Office 或 LibreOffice。`;
+  }
+  if (sourceType === elements.conversionTarget.value) return "来源和目标格式相同，无需转换。";
+  if (!conversionState.outputPath) return "请选择转换结果保存位置。";
+  if (elements.conversionOcr.checked) {
+    const languages = selectedOcrLanguages();
+    if (!languages.length) return "请至少选择一种 OCR 语言。";
+    const missing = languages.filter((language) => !ocrLanguageReady(language));
+    if (missing.length) return "请先下载并校验所选 OCR 语言包。";
+  }
+  return "";
+}
+
+function validateConversion() {
+  const message = conversionValidationMessage();
+  elements.conversionValidation.textContent = message;
+  elements.conversionStart.disabled = Boolean(message) || conversionState.running;
+  return !message;
+}
+
+async function chooseConversionInput() {
+  try {
+    const filePath = await api.chooseConversionInput();
+    if (!filePath) return;
+    conversionState.inputPath = filePath;
+    elements.conversionInputPath.value = filePath;
+    elements.conversionSourceFile.checked = true;
+    updateConversionOptions(true);
+  } catch (error) {
+    elements.conversionValidation.textContent = error.message || "选择来源文件失败。";
+  }
+}
+
+async function chooseConversionOutput() {
+  try {
+    const sourcePath = conversionSourceKind() === "file" ? conversionState.inputPath : state.filePath;
+    const outputPath = await api.chooseConversionOutput(elements.conversionTarget.value, `${conversionBaseName(sourcePath)}-转换`);
+    if (!outputPath) return;
+    conversionState.outputPath = outputPath;
+    elements.conversionOutputPath.value = outputPath;
+    validateConversion();
+  } catch (error) {
+    elements.conversionValidation.textContent = error.message || "选择保存位置失败。";
+  }
+}
+
+function resetConversionProgress() {
+  elements.conversionProgressPanel.hidden = true;
+  elements.conversionProgress.value = 0;
+  elements.conversionProgressMessage.textContent = "准备转换…";
+  elements.conversionProgressPercent.textContent = "0%";
+  document.querySelectorAll("#conversion-progress-stages span").forEach((stage) => stage.classList.remove("active", "complete"));
+}
+
+function resetConversionReport() {
+  conversionState.result = null;
+  elements.conversionReport.hidden = true;
+  elements.conversionReport.classList.remove("success", "error");
+  elements.conversionReportWarnings.hidden = true;
+  elements.conversionReportWarnings.replaceChildren();
+  elements.conversionResultActions.hidden = true;
+}
+
+function setConversionBusy(running) {
+  conversionState.running = running;
+  for (const control of elements.conversionDialog.querySelectorAll("input, select, button")) control.disabled = running;
+  elements.conversionCancel.hidden = !running;
+  elements.conversionCancel.disabled = !running;
+  elements.conversionClose.hidden = running;
+  elements.conversionStart.hidden = running;
+  if (!running) {
+    for (const control of elements.conversionDialog.querySelectorAll("input, select, button")) control.disabled = false;
+    elements.conversionClose.hidden = false;
+    elements.conversionStart.hidden = false;
+    elements.conversionClose.disabled = false;
+    elements.conversionCloseIcon.disabled = false;
+    document.querySelectorAll("[data-ocr-download]").forEach((button) => { button.disabled = false; });
+    validateConversion();
+  }
+}
+
+function canonicalProgressStage(stage) {
+  if (["render", "external"].includes(stage)) return stage === "render" ? "extract" : "generate";
+  if (stage === "done") return "cleanup";
+  return stage;
+}
+
+function normalizedProgress(payload) {
+  if (payload.stage === "done") return 1;
+  if (typeof payload.progress === "number") {
+    if (payload.stage === "ocr") return 0.35 + payload.progress * 0.38;
+    return Math.max(0, Math.min(1, payload.progress));
+  }
+  const ratio = payload.total ? Math.max(0, Math.min(1, Number(payload.current || 0) / payload.total)) : 0;
+  return ({
+    analyze: 0.03,
+    extract: 0.1 + ratio * 0.38,
+    render: 0.12 + ratio * 0.58,
+    external: 0.55,
+    generate: 0.78,
+    save: 0.94,
+    cleanup: 0.98,
+  })[payload.stage] ?? elements.conversionProgress.value;
+}
+
+function updateConversionProgress(payload) {
+  if (!conversionState.running || payload.jobId !== conversionState.jobId) return;
+  elements.conversionProgressPanel.hidden = false;
+  const value = normalizedProgress(payload);
+  elements.conversionProgress.value = value;
+  elements.conversionProgressMessage.textContent = payload.message || "正在转换…";
+  elements.conversionProgressPercent.textContent = `${Math.round(value * 100)}%`;
+  const stages = ["analyze", "extract", "ocr", "generate", "save", "cleanup"];
+  const current = canonicalProgressStage(payload.stage);
+  const currentIndex = stages.indexOf(current);
+  document.querySelectorAll("#conversion-progress-stages span").forEach((element) => {
+    const index = stages.indexOf(element.dataset.stage);
+    element.classList.toggle("active", index === currentIndex);
+    element.classList.toggle("complete", currentIndex >= 0 && index < currentIndex);
+  });
+}
+
+function showConversionReport({ result = null, error = null, canceled = false }) {
+  elements.conversionReport.hidden = false;
+  elements.conversionReport.classList.toggle("success", Boolean(result));
+  elements.conversionReport.classList.toggle("error", !result);
+  elements.conversionReportTitle.textContent = result ? "转换完成" : canceled ? "转换已取消" : "转换失败";
+  elements.conversionReportBadge.textContent = result ? "完成" : canceled ? "已取消" : "失败";
+  if (result) {
+    elements.conversionProgress.value = 1;
+    elements.conversionProgressPercent.textContent = "100%";
+    elements.conversionProgressMessage.textContent = "转换完成。";
+    document.querySelectorAll("#conversion-progress-stages span").forEach((stage) => {
+      stage.classList.remove("active");
+      stage.classList.add("complete");
+    });
+    const seconds = (result.durationMs / 1000).toFixed(result.durationMs >= 10_000 ? 0 : 1);
+    elements.conversionReportSummary.textContent = `已通过 ${result.engine} 生成 ${baseName(result.outputPath)}，耗时 ${seconds} 秒。`;
+    conversionState.result = result;
+    const warnings = result.warnings || [];
+    if (warnings.length) {
+      const title = document.createElement("strong");
+      title.textContent = `转换报告：${warnings.length} 项降级或提示`;
+      const list = document.createElement("ul");
+      for (const warning of warnings) {
+        const item = document.createElement("li");
+        item.textContent = warning;
+        list.append(item);
+      }
+      elements.conversionReportWarnings.replaceChildren(title, list);
+      elements.conversionReportWarnings.hidden = false;
+    }
+    elements.conversionResultActions.hidden = false;
+    elements.conversionOpenMarkdown.hidden = elements.conversionTarget.value !== "md";
+  } else {
+    elements.conversionReportSummary.textContent = canceled ? "来源文件未修改，临时文件已清理。" : error?.message || "转换过程中发生未知错误。";
+    elements.conversionResultActions.hidden = true;
+  }
+}
+
+async function startConversion() {
+  if (!validateConversion()) return;
+  if (conversionSourceKind() === "editor" && !state.filePath) {
+    const images = unresolvedRelativeImages(elements.editor.value);
+    if (images.length && !window.confirm(`未命名文档中的以下相对图片无法解析：\n\n${images.join("\n")}\n\n是否继续转换并在报告中保留缺失提示？`)) return;
+  }
+  resetConversionReport();
+  resetConversionProgress();
+  conversionState.jobId = window.crypto.randomUUID();
+  elements.conversionProgressPanel.hidden = false;
+  setConversionBusy(true);
+  const request = {
+    jobId: conversionState.jobId,
+    source: conversionSourceKind() === "editor"
+      ? { kind: "editor", content: elements.editor.value, filePath: state.filePath }
+      : { kind: "file", filePath: conversionState.inputPath },
+    target: elements.conversionTarget.value,
+    mode: conversionMode(),
+    outputPath: conversionState.outputPath,
+    options: {
+      includeRemoteImages: elements.conversionRemoteImages.checked,
+      ocr: elements.conversionOcr.checked,
+      ocrLanguages: selectedOcrLanguages(),
+    },
+  };
+  try {
+    const result = await api.startConversion(request);
+    if (result?.canceled) showConversionReport({ canceled: true });
+    else showConversionReport({ result });
+  } catch (error) {
+    const canceled = /取消/.test(error?.message || "");
+    showConversionReport({ error, canceled });
+  } finally {
+    conversionState.jobId = null;
+    setConversionBusy(false);
+  }
+}
+
+async function cancelConversion() {
+  if (!conversionState.running || !conversionState.jobId) return;
+  elements.conversionCancel.disabled = true;
+  elements.conversionProgressMessage.textContent = "正在取消并清理临时文件…";
+  try {
+    await api.cancelConversion(conversionState.jobId);
+  } catch (error) {
+    elements.conversionProgressMessage.textContent = error.message || "取消转换失败。";
+  }
+}
+
+async function downloadOcrLanguage(language) {
+  if (conversionState.downloadingLanguage) return;
+  conversionState.downloadingLanguage = language;
+  elements.conversionComponentProgress.hidden = false;
+  elements.conversionComponentProgress.textContent = `正在下载 ${language === "chi_sim" ? "简体中文" : "English"} OCR 语言包…`;
+  updateOcrLanguageStatus();
+  try {
+    const result = await api.downloadOcrLanguage(language);
+    if (conversionState.capabilities) conversionState.capabilities.ocr = result.status;
+    elements.conversionComponentProgress.textContent = "语言包已下载，并通过 SHA-256 校验。";
+  } catch (error) {
+    elements.conversionComponentProgress.textContent = error.message || "OCR 语言包下载失败。";
+  } finally {
+    conversionState.downloadingLanguage = null;
+    updateOcrLanguageStatus();
+    validateConversion();
+  }
+}
+
+function closeConversionCenter() {
+  if (!conversionState.running && elements.conversionDialog.open) elements.conversionDialog.close();
+}
+
+async function openConversionCenter() {
+  if (!elements.conversionDialog.open) elements.conversionDialog.showModal();
+  if (conversionState.running) return;
+  conversionState.inputPath = null;
+  conversionState.outputPath = null;
+  elements.conversionInputPath.value = "";
+  elements.conversionOutputPath.value = "";
+  elements.conversionSourceEditor.checked = true;
+  elements.conversionTarget.value = "pdf";
+  document.querySelector("#conversion-mode-editable").checked = true;
+  elements.conversionRemoteImages.checked = false;
+  elements.conversionOcr.checked = false;
+  resetConversionProgress();
+  resetConversionReport();
+  updateConversionOptions(false);
+  await refreshConversionCapabilities(false);
+}
+
 function handleCommand(command) {
   const actions = {
     new: newDocument,
@@ -547,6 +1017,7 @@ function handleCommand(command) {
     "open-folder": openFolder,
     save: () => saveDocument(false),
     "save-as": () => saveDocument(true),
+    convert: openConversionCenter,
     find: showFind,
     "view-editor": () => setView("editor"),
     "view-split": () => setView("split"),
@@ -617,6 +1088,7 @@ elements.preview.addEventListener("click", (event) => {
 
 document.querySelector("#new-button").addEventListener("click", newDocument);
 document.querySelector("#open-button").addEventListener("click", openFile);
+document.querySelector("#convert-button").addEventListener("click", openConversionCenter);
 document.querySelector("#save-button").addEventListener("click", () => saveDocument(false));
 document.querySelector("#folder-button").addEventListener("click", openFolder);
 document.querySelector("#theme-button").addEventListener("click", cycleTheme);
@@ -646,6 +1118,43 @@ document.querySelectorAll("[data-view-mode]").forEach((button) => {
   button.addEventListener("click", () => setView(button.dataset.viewMode));
 });
 
+elements.conversionSourceEditor.addEventListener("change", () => updateConversionOptions(true));
+elements.conversionSourceFile.addEventListener("change", () => updateConversionOptions(true));
+document.querySelector("#conversion-input-button").addEventListener("click", chooseConversionInput);
+document.querySelector("#conversion-output-button").addEventListener("click", chooseConversionOutput);
+elements.conversionTarget.addEventListener("change", () => updateConversionOptions(true));
+document.querySelectorAll('input[name="conversion-mode"]').forEach((input) => input.addEventListener("change", () => updateConversionOptions(false)));
+elements.conversionRemoteImages.addEventListener("change", validateConversion);
+elements.conversionOcr.addEventListener("change", () => updateConversionOptions(false));
+elements.conversionOcrChiSim.addEventListener("change", validateConversion);
+elements.conversionOcrEng.addEventListener("change", validateConversion);
+document.querySelectorAll("[data-ocr-download]").forEach((button) => {
+  button.addEventListener("click", () => downloadOcrLanguage(button.dataset.ocrDownload));
+});
+document.querySelector("#conversion-refresh-capabilities").addEventListener("click", () => refreshConversionCapabilities(true));
+elements.conversionCapabilities.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-component]");
+  if (button) api.openConversionComponentPage(button.dataset.component).catch(reportError);
+});
+elements.conversionStart.addEventListener("click", startConversion);
+elements.conversionCancel.addEventListener("click", cancelConversion);
+elements.conversionClose.addEventListener("click", closeConversionCenter);
+elements.conversionCloseIcon.addEventListener("click", closeConversionCenter);
+elements.conversionDialog.addEventListener("cancel", (event) => {
+  if (conversionState.running) event.preventDefault();
+});
+document.querySelector("#conversion-open-result").addEventListener("click", () => {
+  if (conversionState.result?.outputPath) api.openConversionResult(conversionState.result.outputPath).catch(reportError);
+});
+document.querySelector("#conversion-show-result").addEventListener("click", () => {
+  if (conversionState.result?.outputPath) api.showConversionResult(conversionState.result.outputPath).catch(reportError);
+});
+elements.conversionOpenMarkdown.addEventListener("click", async () => {
+  if (!conversionState.result?.outputPath) return;
+  await replaceDocumentAfterDiscard(() => api.readFile(conversionState.result.outputPath));
+  closeConversionCenter();
+});
+
 document.addEventListener("dragover", (event) => event.preventDefault());
 document.addEventListener("drop", async (event) => {
   event.preventDefault();
@@ -660,6 +1169,15 @@ document.addEventListener("drop", async (event) => {
 api.onCommand(handleCommand);
 api.onSaveBeforeClose(async () => api.finishClose(await saveDocument(false)));
 api.onOpenPath((filePath) => openPath(filePath));
+api.onConversionProgress(updateConversionProgress);
+api.onConversionComponentProgress((progress) => {
+  if (!conversionState.downloadingLanguage || progress.language !== conversionState.downloadingLanguage) return;
+  const percent = progress.total ? Math.round((progress.downloaded / progress.total) * 100) : null;
+  elements.conversionComponentProgress.hidden = false;
+  elements.conversionComponentProgress.textContent = percent === null
+    ? `已下载 ${(progress.downloaded / 1024 / 1024).toFixed(1)} MB…`
+    : `正在下载并校验语言包：${percent}%`;
+});
 api.onE2eRun(async ({ directory }) => {
   const result = { passed: false, assertions: {}, errors: [] };
   const fixturePath = `${directory}\\01-完整语法.md`;
