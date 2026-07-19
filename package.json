@@ -25,7 +25,7 @@
     "installer:win": "npm run package:win && node scripts/build-installer.mjs"
   },
   "dependencies": {
-    "@napi-rs/canvas": "^0.1.100",
+    "@napi-rs/canvas": "^1.0.2",
     "docx": "^9.5.1",
     "iconv-lite": "0.7.3",
     "jszip": "^3.10.1",
