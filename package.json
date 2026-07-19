@@ -29,7 +29,7 @@
     "docx": "^9.5.1",
     "iconv-lite": "0.7.3",
     "jszip": "^3.10.1",
-    "mammoth": "^1.11.0",
+    "mammoth": "^1.12.0",
     "pdfjs-dist": "^5.4.530",
     "pptxgenjs": "^4.0.1",
     "remark-gfm": "^4.0.1",
