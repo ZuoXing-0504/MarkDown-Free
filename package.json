@@ -42,7 +42,7 @@
     "unified": "^11.0.5"
   },
   "devDependencies": {
-    "@electron/packager": "20.0.2",
+    "@electron/packager": "20.0.3",
     "dompurify": "3.4.12",
     "electron": "43.1.0",
     "esbuild": "0.28.1",
