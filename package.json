@@ -30,7 +30,7 @@
     "iconv-lite": "0.7.3",
     "jszip": "^3.10.1",
     "mammoth": "^1.11.0",
-    "pdfjs-dist": "^5.4.530",
+    "pdfjs-dist": "^6.1.200",
     "pptxgenjs": "^4.0.1",
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",
